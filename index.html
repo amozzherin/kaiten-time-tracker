@@ -223,8 +223,8 @@
                 <th>Клиент</th>
                 <th>Минут за выбранный период</th>
                 <th>Часов за выбранный период</th>
-                <th>Минут по карте (все строки в ответе)</th>
-                <th>Часов по карте (все строки в ответе)</th>
+                <th>Минут за все время</th>
+                <th>Часов за все время</th>
               </tr>
             </thead>
             <tbody id="rows"></tbody>
@@ -394,11 +394,8 @@
         return grouped;
       }
 
-      /**
-       * Один запрос с from/to: факт по клиентам и по карте — сумма минут из ответа.
-       * Вторая пара колонок — та же сумма по строкам ответа (не «жизнь карты с 2000 года» без второго запроса).
-       */
-      function buildCardRowsFromSingleFetch(items, selectMap = {}) {
+      /** Один запрос таймшита: обе колонки минут считаются из одного ответа (Kaiten уже режет по from/to). */
+      function buildCardRowsFromTimesheet(items, selectMap = {}) {
         const map = accumulateByCard(items, selectMap);
         const rows = [];
         for (const [, v] of map) {
@@ -621,7 +618,7 @@
             }
           }
 
-          const groupedRows = buildCardRowsFromSingleFetch(filtered, selectMap);
+          const groupedRows = buildCardRowsFromTimesheet(filtered, selectMap);
           const totalMinutes = groupedRows.reduce((acc, entry) => acc + (entry.minutesPeriod ?? 0), 0);
           latestGroupedRows = groupedRows;
 
