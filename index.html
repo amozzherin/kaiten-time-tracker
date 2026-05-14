@@ -239,6 +239,7 @@
     </script>
     <script>
       const KAITEN_BASE_URL = "https://robotmia.kaiten.ru";
+      const ALL_TIME_RANGE_START = "2000-01-01";
 
       const tokenInput = document.getElementById("token");
       const fromDateInput = document.getElementById("fromDate");
@@ -368,64 +369,55 @@
         return copy;
       }
 
-      function parseEntryDate(entry) {
-        return (
-          entry.created_at ||
-          entry.createdAt ||
-          entry.for_date ||
-          entry.forDate ||
-          entry.started_at ||
-          entry.startedAt ||
-          entry.date ||
-          null
-        );
-      }
-
-      function entryInSelectedPeriod(dateValue, periodFromStart, periodToEnd) {
-        if (!dateValue) return false;
-        const d = new Date(dateValue);
-        if (Number.isNaN(d.getTime())) return false;
-        return d >= periodFromStart && d <= periodToEnd;
-      }
-
-      /**
-       * Один ответ API: «все время» = сумма всех строк в ответе по карте;
-       * «выбранный период» = сумма только строк, у которых дата записи попадает в интервал дат в форме.
-       */
-      function buildMergedCardRowsFromList(items, selectMap, periodFromStart, periodToEnd) {
+      function accumulateByCard(items, selectMap = {}) {
         const grouped = new Map();
         for (const item of items) {
           const cardId = parseCardId(item);
           const key = cardId == null ? `unknown:${parseCardTitle(item)}` : String(cardId);
-          let row = grouped.get(key);
-          if (!row) {
-            row = {
-              cardId,
-              title: "",
-              client: "",
-              minutesPeriod: 0,
-              minutesAllTime: 0
-            };
-            grouped.set(key, row);
-          }
+          const current = grouped.get(key) || {
+            cardId,
+            title: "",
+            client: "",
+            minutes: 0
+          };
 
           const title = parseCardTitle(item);
-          if (!row.title && title) {
-            row.title = title;
+          if (!current.title && title) {
+            current.title = title;
           }
           const client = parseClientName(item, selectMap);
-          if (!row.client && client) {
-            row.client = client;
+          if (!current.client && client) {
+            current.client = client;
           }
-
-          const m = parseMinutes(item);
-          row.minutesAllTime += m;
-          if (entryInSelectedPeriod(parseEntryDate(item), periodFromStart, periodToEnd)) {
-            row.minutesPeriod += m;
-          }
+          current.minutes += parseMinutes(item);
+          grouped.set(key, current);
         }
+        return grouped;
+      }
 
-        const rows = Array.from(grouped.values());
+      /**
+       * Период — ответ API по датам из формы; «за всё время» — отдельный запрос с широким from..to,
+       * иначе в одном ответе обе колонки совпадают (Kaiten уже отфильтровал строки по периоду).
+       */
+      function buildMergedCardRows(periodItems, allTimeItems, selectMap = {}) {
+        const periodMap = accumulateByCard(periodItems, selectMap);
+        const allMap = accumulateByCard(allTimeItems, selectMap);
+        const keys = new Set([...periodMap.keys(), ...allMap.keys()]);
+        const rows = [];
+        for (const key of keys) {
+          const p = periodMap.get(key);
+          const a = allMap.get(key);
+          const cardId = p?.cardId ?? a?.cardId ?? null;
+          const title = (p?.title || a?.title || "").trim();
+          const client = (p?.client || a?.client || "").trim();
+          rows.push({
+            cardId,
+            title,
+            client,
+            minutesPeriod: p?.minutes ?? 0,
+            minutesAllTime: a?.minutes ?? 0
+          });
+        }
         rows.sort((x, y) => {
           if (y.minutesPeriod !== x.minutesPeriod) return y.minutesPeriod - x.minutesPeriod;
           return y.minutesAllTime - x.minutesAllTime;
@@ -606,27 +598,40 @@
         rowsEl.innerHTML = "";
 
         const baseUrl = KAITEN_BASE_URL;
+        const allTimeToYmd = formatLocalDate(new Date());
 
         try {
-          const apiUrl = getProxyApiUrl(baseUrl, fromDateRaw, toDateRaw);
+          const apiUrlPeriod = getProxyApiUrl(baseUrl, fromDateRaw, toDateRaw);
+          const apiUrlAllTime = getProxyApiUrl(baseUrl, ALL_TIME_RANGE_START, allTimeToYmd);
           const commonHeaders = {
             Authorization: `Bearer ${token}`,
             Accept: "application/json"
           };
 
-          const [response, selectResponse] = await Promise.all([
-            fetch(apiUrl, { method: "GET", headers: commonHeaders }),
+          const [responsePeriod, responseAll, selectResponse] = await Promise.all([
+            fetch(apiUrlPeriod, { method: "GET", headers: commonHeaders }),
+            fetch(apiUrlAllTime, { method: "GET", headers: commonHeaders }),
             fetch(getProxySelectValuesUrl(baseUrl, "460456"), { method: "GET", headers: commonHeaders })
           ]);
 
-          if (!response.ok) {
-            const text = await response.text();
-            throw new Error(`HTTP ${response.status}: ${text || "Ошибка API"}`);
+          if (!responsePeriod.ok) {
+            const text = await responsePeriod.text();
+            throw new Error(`HTTP ${responsePeriod.status}: ${text || "Ошибка API"}`);
+          }
+          if (!responseAll.ok) {
+            const text = await responseAll.text();
+            throw new Error(`HTTP ${responseAll.status} (весь срок): ${text || "Ошибка API"}`);
           }
 
-          const payload = await response.json();
-          const list = Array.isArray(payload) ? payload : payload?.items || payload?.data || [];
-          const filtered = list.filter((entry) => isRequiredBoard(entry));
+          const payloadPeriod = await responsePeriod.json();
+          const payloadAll = await responseAll.json();
+          const listPeriod = Array.isArray(payloadPeriod)
+            ? payloadPeriod
+            : payloadPeriod?.items || payloadPeriod?.data || [];
+          const listAll = Array.isArray(payloadAll) ? payloadAll : payloadAll?.items || payloadAll?.data || [];
+
+          const filteredPeriod = listPeriod.filter((entry) => isRequiredBoard(entry));
+          const filteredAll = listAll.filter((entry) => isRequiredBoard(entry));
 
           let selectMap = {};
           if (selectResponse.ok) {
@@ -636,11 +641,7 @@
             }
           }
 
-          const periodFromStart = new Date(fromDateRaw);
-          periodFromStart.setHours(0, 0, 0, 0);
-          const periodToEnd = toLocalEndOfDay(new Date(toDateRaw));
-
-          const groupedRows = buildMergedCardRowsFromList(filtered, selectMap, periodFromStart, periodToEnd);
+          const groupedRows = buildMergedCardRows(filteredPeriod, filteredAll, selectMap);
           const totalMinutes = groupedRows.reduce((acc, entry) => acc + (entry.minutesPeriod ?? 0), 0);
           latestGroupedRows = groupedRows;
 
