@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Kaiten Time Tracker</title>
+    <title>Анализ трека Kaiten по клиентам</title>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
       :root {
@@ -137,18 +137,13 @@
   </head>
   <body>
     <div class="container">
-      <h1>Kaiten: время треков за период</h1>
+      <h1>Анализ трека Kaiten по клиентам</h1>
 
       <div class="panel">
         <div class="grid">
           <label class="field full">
-            <span>Базовый URL</span>
-            <input id="baseUrl" type="url" placeholder="https://robotmia.kaiten.ru" value="https://robotmia.kaiten.ru" />
-          </label>
-
-          <label class="field full">
-            <span>Bearer token</span>
-            <input id="token" type="password" placeholder="Вставьте API токен" />
+            <span>Введите ваш токен доступа</span>
+            <input id="token" type="password" placeholder="Токен API Kaiten" />
           </label>
 
           <label class="field">
@@ -162,7 +157,7 @@
           </label>
 
           <label class="field full">
-            <span>Конфиг норм (xlsx): колонка 1 — клиент, колонка 2 — часы нормы</span>
+            <span>Конфиг нормо-часов (xlsx): колонка 1 — клиент, колонка 2 — нормо-часы</span>
             <input id="configFile" type="file" accept=".xlsx,.xls" />
           </label>
         </div>
@@ -190,7 +185,7 @@
             <div class="metric-value" id="hoursTotal">0.00</div>
           </div>
         </div>
-        <div id="status">Введите токен и период, затем нажмите "Загрузить".</div>
+        <div id="status">Введите токен доступа и период, затем нажмите «Загрузить».</div>
         <div id="configStatus" class="note">Конфиг норм не загружен.</div>
         <div class="note">
           Сводка ограничена условием: учитываются только записи карточек с доски
@@ -202,7 +197,7 @@
         <h3>По клиентам</h3>
         <div class="client-grid" id="clientsGrid">
           <div class="head">Клиент</div>
-          <div class="head">Минуты</div>
+          <div class="head">% от суммы минут</div>
           <div class="head">Факт, ч</div>
           <div class="head">Норма, ч</div>
           <div class="head">% к норме</div>
@@ -226,7 +221,10 @@
                 <th>Номер карты</th>
                 <th>Название карты</th>
                 <th>Клиент</th>
-                <th>Минуты</th>
+                <th>Минут за выбранный период</th>
+                <th>Часов за выбранный период</th>
+                <th>Минут за все время</th>
+                <th>Часов за все время</th>
               </tr>
             </thead>
             <tbody id="rows"></tbody>
@@ -237,10 +235,11 @@
 
     <!-- GitHub Pages: set your Cloudflare Worker base URL (https://....workers.dev), no trailing slash -->
     <script>
-      window.KAITEN_PROXY_BASE_URL = "https://muddy-firefly-42ef.a-mozzherin.workers.dev";
+      window.KAITEN_PROXY_BASE_URL = "";
     </script>
     <script>
-      const baseUrlInput = document.getElementById("baseUrl");
+      const KAITEN_BASE_URL = "https://robotmia.kaiten.ru";
+
       const tokenInput = document.getElementById("token");
       const fromDateInput = document.getElementById("fromDate");
       const toDateInput = document.getElementById("toDate");
@@ -307,19 +306,6 @@
         return 0;
       }
 
-      function parseDate(entry) {
-        return (
-          entry.created_at ||
-          entry.createdAt ||
-          entry.for_date ||
-          entry.forDate ||
-          entry.started_at ||
-          entry.startedAt ||
-          entry.date ||
-          null
-        );
-      }
-
       function parseCardId(entry) {
         return entry.card_id || entry.cardId || entry.card?.id || null;
       }
@@ -376,50 +362,75 @@
         return "";
       }
 
-      function inRange(dateValue, from, to) {
-        if (!dateValue) return false;
-        const d = new Date(dateValue);
-        if (Number.isNaN(d.getTime())) return false;
-        return d >= from && d <= to;
-      }
-
       function toLocalEndOfDay(d) {
         const copy = new Date(d);
         copy.setHours(23, 59, 59, 999);
         return copy;
       }
 
-      function formatHours(minutes) {
-        const hours = minutes / 60;
-        return `${hours.toFixed(2)} ч (${minutes} мин)`;
+      function parseEntryDate(entry) {
+        return (
+          entry.created_at ||
+          entry.createdAt ||
+          entry.for_date ||
+          entry.forDate ||
+          entry.started_at ||
+          entry.startedAt ||
+          entry.date ||
+          null
+        );
       }
 
-      function groupByCards(items, selectMap = {}) {
-        const grouped = new Map();
+      function entryInSelectedPeriod(dateValue, periodFromStart, periodToEnd) {
+        if (!dateValue) return false;
+        const d = new Date(dateValue);
+        if (Number.isNaN(d.getTime())) return false;
+        return d >= periodFromStart && d <= periodToEnd;
+      }
 
+      /**
+       * Один ответ API: «все время» = сумма всех строк в ответе по карте;
+       * «выбранный период» = сумма только строк, у которых дата записи попадает в интервал дат в форме.
+       */
+      function buildMergedCardRowsFromList(items, selectMap, periodFromStart, periodToEnd) {
+        const grouped = new Map();
         for (const item of items) {
           const cardId = parseCardId(item);
           const key = cardId == null ? `unknown:${parseCardTitle(item)}` : String(cardId);
-          const current = grouped.get(key) || {
-            cardId,
-            title: "",
-            client: "",
-            minutes: 0
-          };
+          let row = grouped.get(key);
+          if (!row) {
+            row = {
+              cardId,
+              title: "",
+              client: "",
+              minutesPeriod: 0,
+              minutesAllTime: 0
+            };
+            grouped.set(key, row);
+          }
 
           const title = parseCardTitle(item);
-          if (!current.title && title) {
-            current.title = title;
+          if (!row.title && title) {
+            row.title = title;
           }
           const client = parseClientName(item, selectMap);
-          if (!current.client && client) {
-            current.client = client;
+          if (!row.client && client) {
+            row.client = client;
           }
-          current.minutes += parseMinutes(item);
-          grouped.set(key, current);
+
+          const m = parseMinutes(item);
+          row.minutesAllTime += m;
+          if (entryInSelectedPeriod(parseEntryDate(item), periodFromStart, periodToEnd)) {
+            row.minutesPeriod += m;
+          }
         }
 
-        return Array.from(grouped.values()).sort((a, b) => b.minutes - a.minutes);
+        const rows = Array.from(grouped.values());
+        rows.sort((x, y) => {
+          if (y.minutesPeriod !== x.minutesPeriod) return y.minutesPeriod - x.minutesPeriod;
+          return y.minutesAllTime - x.minutesAllTime;
+        });
+        return rows;
       }
 
       function renderRows(rows, baseUrl) {
@@ -430,11 +441,18 @@
           const cardUrl = row.cardId == null ? "" : `${baseUrl.replace(/\/+$/, "")}/${row.cardId}`;
           const title = row.title || "-";
           const client = row.client || "-";
+          const mp = row.minutesPeriod ?? 0;
+          const ma = row.minutesAllTime ?? 0;
+          const hp = (mp / 60).toFixed(2);
+          const ha = (ma / 60).toFixed(2);
           tr.innerHTML = `
             <td>${row.cardId == null ? "-" : `<a href="${escapeHtml(cardUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(cardNumber)}</a>`}</td>
             <td>${escapeHtml(title)}</td>
             <td>${escapeHtml(client)}</td>
-            <td>${row.minutes}</td>
+            <td>${mp}</td>
+            <td>${hp}</td>
+            <td>${ma}</td>
+            <td>${ha}</td>
           `;
           rowsEl.appendChild(tr);
         }
@@ -452,7 +470,7 @@
         const byClient = new Map();
         for (const row of rows) {
           const client = row.client || "-";
-          byClient.set(client, (byClient.get(client) || 0) + row.minutes);
+          byClient.set(client, (byClient.get(client) || 0) + (row.minutesPeriod ?? 0));
         }
 
         const sorted = Array.from(byClient.entries()).sort((a, b) => b[1] - a[1]);
@@ -551,7 +569,7 @@
           map.set(normalizeClientName(clientName), numHours);
         }
         clientNormHoursMap = map;
-        configStatusEl.textContent = `Конфиг загружен: ${file.name}. Норм по клиентам: ${map.size}.`;
+        configStatusEl.textContent = `Конфиг нормо-часов загружен: ${file.name}. Записей: ${map.size}.`;
       }
 
       function escapeHtml(value) {
@@ -564,13 +582,12 @@
       }
 
       async function loadData() {
-        const baseUrl = baseUrlInput.value.trim();
         const token = tokenInput.value.trim();
         const fromDateRaw = fromDateInput.value;
         const toDateRaw = toDateInput.value;
 
-        if (!baseUrl || !token || !fromDateRaw || !toDateRaw) {
-          statusEl.textContent = "Заполните URL, токен и обе даты.";
+        if (!token || !fromDateRaw || !toDateRaw) {
+          statusEl.textContent = "Введите токен и обе даты.";
           return;
         }
 
@@ -587,6 +604,8 @@
         minutesTotalEl.textContent = "0";
         hoursTotalEl.textContent = "0.00";
         rowsEl.innerHTML = "";
+
+        const baseUrl = KAITEN_BASE_URL;
 
         try {
           const apiUrl = getProxyApiUrl(baseUrl, fromDateRaw, toDateRaw);
@@ -608,6 +627,7 @@
           const payload = await response.json();
           const list = Array.isArray(payload) ? payload : payload?.items || payload?.data || [];
           const filtered = list.filter((entry) => isRequiredBoard(entry));
+
           let selectMap = {};
           if (selectResponse.ok) {
             const selectPayload = await selectResponse.json();
@@ -615,16 +635,18 @@
               selectMap = selectPayload.map;
             }
           }
-          const groupedRows = groupByCards(filtered, selectMap);
-          const totalMinutes = groupedRows.reduce((acc, entry) => acc + entry.minutes, 0);
-          const meta = payload?.meta;
+
+          const periodFromStart = new Date(fromDateRaw);
+          periodFromStart.setHours(0, 0, 0, 0);
+          const periodToEnd = toLocalEndOfDay(new Date(toDateRaw));
+
+          const groupedRows = buildMergedCardRowsFromList(filtered, selectMap, periodFromStart, periodToEnd);
+          const totalMinutes = groupedRows.reduce((acc, entry) => acc + (entry.minutesPeriod ?? 0), 0);
           latestGroupedRows = groupedRows;
 
-          statusEl.textContent = `Получено записей: ${list.length}. В периоде: ${filtered.length}.` +
-            (meta?.proxyVersion
-              ? `\nProxy: ${meta.proxyVersion}, режим: ${meta.pagingMode || "-"}, запросов к API: ${meta.requestsMade}, endpoint: ${meta.endpoint}`
-              : "");
-          cardsCountEl.textContent = String(groupedRows.length);
+          statusEl.textContent = "Данные загружены.";
+          const cardsInPeriod = groupedRows.filter((r) => (r.minutesPeriod ?? 0) > 0).length;
+          cardsCountEl.textContent = String(cardsInPeriod);
           minutesTotalEl.textContent = String(totalMinutes);
           hoursTotalEl.textContent = (totalMinutes / 60).toFixed(2);
           updateClientFilterOptions(groupedRows);
@@ -667,21 +689,20 @@
       loadBtn.addEventListener("click", loadData);
       clearBtn.addEventListener("click", clearAll);
       clientFilterEl.addEventListener("change", () => {
-        const baseUrl = baseUrlInput.value.trim();
-        renderDetailsWithFilter(baseUrl);
+        renderDetailsWithFilter(KAITEN_BASE_URL);
       });
       configFileInput.addEventListener("change", async (event) => {
         try {
           const file = event.target.files && event.target.files[0];
           if (!file) {
             clientNormHoursMap = new Map();
-            configStatusEl.textContent = "Конфиг норм не загружен.";
+            configStatusEl.textContent = "Конфиг нормо-часов не загружен.";
             return;
           }
           await loadNormsFromFile(file);
         } catch (error) {
           clientNormHoursMap = new Map();
-          configStatusEl.textContent = `Ошибка загрузки xlsx: ${error.message}`;
+          configStatusEl.textContent = `Ошибка загрузки xlsx (нормо-часы): ${error.message}`;
         }
       });
     </script>
