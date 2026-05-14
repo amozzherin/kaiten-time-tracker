@@ -221,10 +221,8 @@
                 <th>Номер карты</th>
                 <th>Название карты</th>
                 <th>Клиент</th>
-                <th>Минут за выбранный период</th>
-                <th>Часов за выбранный период</th>
-                <th>Минут за все время</th>
-                <th>Часов за все время</th>
+                <th>Минут по карте всего</th>
+                <th>Часов по карте всего</th>
               </tr>
             </thead>
             <tbody id="rows"></tbody>
@@ -394,7 +392,7 @@
         return grouped;
       }
 
-      /** Один запрос таймшита: обе колонки минут считаются из одного ответа (Kaiten уже режет по from/to). */
+      /** Один запрос таймшита: сумма минут по карте из ответа (Kaiten режет по from/to). */
       function buildCardRowsFromTimesheet(items, selectMap = {}) {
         const map = accumulateByCard(items, selectMap);
         const rows = [];
@@ -404,13 +402,12 @@
             cardId: v.cardId,
             title: (v.title || "").trim(),
             client: (v.client || "").trim(),
-            minutesPeriod: m,
-            minutesAllTime: m
+            minutes: m
           });
         }
         rows.sort((x, y) => {
-          if (y.minutesPeriod !== x.minutesPeriod) return y.minutesPeriod - x.minutesPeriod;
-          return y.minutesAllTime - x.minutesAllTime;
+          if (y.minutes !== x.minutes) return y.minutes - x.minutes;
+          return (y.title || "").localeCompare(x.title || "");
         });
         return rows;
       }
@@ -423,18 +420,14 @@
           const cardUrl = row.cardId == null ? "" : `${baseUrl.replace(/\/+$/, "")}/${row.cardId}`;
           const title = row.title || "-";
           const client = row.client || "-";
-          const mp = row.minutesPeriod ?? 0;
-          const ma = row.minutesAllTime ?? 0;
-          const hp = (mp / 60).toFixed(2);
-          const ha = (ma / 60).toFixed(2);
+          const m = row.minutes ?? 0;
+          const h = (m / 60).toFixed(2);
           tr.innerHTML = `
             <td>${row.cardId == null ? "-" : `<a href="${escapeHtml(cardUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(cardNumber)}</a>`}</td>
             <td>${escapeHtml(title)}</td>
             <td>${escapeHtml(client)}</td>
-            <td>${mp}</td>
-            <td>${hp}</td>
-            <td>${ma}</td>
-            <td>${ha}</td>
+            <td>${m}</td>
+            <td>${h}</td>
           `;
           rowsEl.appendChild(tr);
         }
@@ -452,7 +445,7 @@
         const byClient = new Map();
         for (const row of rows) {
           const client = row.client || "-";
-          byClient.set(client, (byClient.get(client) || 0) + (row.minutesPeriod ?? 0));
+          byClient.set(client, (byClient.get(client) || 0) + (row.minutes ?? 0));
         }
 
         const sorted = Array.from(byClient.entries()).sort((a, b) => b[1] - a[1]);
@@ -619,11 +612,11 @@
           }
 
           const groupedRows = buildCardRowsFromTimesheet(filtered, selectMap);
-          const totalMinutes = groupedRows.reduce((acc, entry) => acc + (entry.minutesPeriod ?? 0), 0);
+          const totalMinutes = groupedRows.reduce((acc, entry) => acc + (entry.minutes ?? 0), 0);
           latestGroupedRows = groupedRows;
 
           statusEl.textContent = "Данные загружены.";
-          const cardsInPeriod = groupedRows.filter((r) => (r.minutesPeriod ?? 0) > 0).length;
+          const cardsInPeriod = groupedRows.filter((r) => (r.minutes ?? 0) > 0).length;
           cardsCountEl.textContent = String(cardsInPeriod);
           minutesTotalEl.textContent = String(totalMinutes);
           hoursTotalEl.textContent = (totalMinutes / 60).toFixed(2);
