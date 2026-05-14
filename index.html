@@ -1,0 +1,689 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kaiten Time Tracker</title>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        line-height: 1.4;
+      }
+      .container {
+        max-width: 920px;
+        margin: 24px auto;
+        padding: 0 16px;
+      }
+      h1 {
+        margin-top: 0;
+      }
+      .panel {
+        border: 1px solid #7774;
+        border-radius: 10px;
+        padding: 14px;
+        margin-bottom: 16px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(180px, 1fr));
+        gap: 12px;
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .field.full {
+        grid-column: 1 / -1;
+      }
+      input,
+      button,
+      textarea {
+        font: inherit;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid #7776;
+      }
+      button {
+        cursor: pointer;
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      #status {
+        white-space: pre-wrap;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        border: 1px solid #7774;
+        padding: 6px 8px;
+        text-align: left;
+        vertical-align: top;
+      }
+      .muted {
+        opacity: 0.8;
+        font-size: 0.92em;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(160px, 1fr));
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .metric {
+        border: 1px solid #7774;
+        border-radius: 10px;
+        padding: 10px;
+      }
+      .metric-label {
+        font-size: 0.88em;
+        opacity: 0.85;
+        margin-bottom: 6px;
+      }
+      .metric-value {
+        font-size: 1.35em;
+        font-weight: 700;
+      }
+      .note {
+        margin-top: 8px;
+        padding: 8px 10px;
+        border: 1px solid #7774;
+        border-radius: 8px;
+        font-size: 0.92em;
+      }
+      .client-grid {
+        display: grid;
+        grid-template-columns: minmax(220px, 1.7fr) minmax(100px, 0.8fr) minmax(110px, 0.9fr) minmax(110px, 0.9fr) minmax(120px, 1fr);
+        gap: 8px;
+      }
+      .client-grid .head {
+        font-weight: 700;
+      }
+      .client-grid > div {
+        border: 1px solid #7773;
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+      .percent-badge {
+        display: inline-block;
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-weight: 700;
+        border: 1px solid #7774;
+      }
+      @media (max-width: 720px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .metrics {
+          grid-template-columns: 1fr;
+        }
+        .client-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Kaiten: время треков за период</h1>
+
+      <div class="panel">
+        <div class="grid">
+          <label class="field full">
+            <span>Базовый URL</span>
+            <input id="baseUrl" type="url" placeholder="https://robotmia.kaiten.ru" value="https://robotmia.kaiten.ru" />
+          </label>
+
+          <label class="field full">
+            <span>Bearer token</span>
+            <input id="token" type="password" placeholder="Вставьте API токен" />
+          </label>
+
+          <label class="field">
+            <span>Дата начала</span>
+            <input id="fromDate" type="date" />
+          </label>
+
+          <label class="field">
+            <span>Дата окончания</span>
+            <input id="toDate" type="date" />
+          </label>
+
+          <label class="field full">
+            <span>Конфиг норм (xlsx): колонка 1 — клиент, колонка 2 — часы нормы</span>
+            <input id="configFile" type="file" accept=".xlsx,.xls" />
+          </label>
+        </div>
+
+        <div class="actions">
+          <button id="loadBtn" type="button">Загрузить</button>
+          <button id="clearBtn" type="button">Очистить</button>
+        </div>
+
+      </div>
+
+      <div class="panel">
+        <h3>Сводка</h3>
+        <div class="metrics">
+          <div class="metric">
+            <div class="metric-label">Количество карт за период</div>
+            <div class="metric-value" id="cardsCount">0</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Сумма минут за период</div>
+            <div class="metric-value" id="minutesTotal">0</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Сумма часов за период</div>
+            <div class="metric-value" id="hoursTotal">0.00</div>
+          </div>
+        </div>
+        <div id="status">Введите токен и период, затем нажмите "Загрузить".</div>
+        <div id="configStatus" class="note">Конфиг норм не загружен.</div>
+        <div class="note">
+          Сводка ограничена условием: учитываются только записи карточек с доски
+          <strong>АККАУТИНГ</strong>.
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>По клиентам</h3>
+        <div class="client-grid" id="clientsGrid">
+          <div class="head">Клиент</div>
+          <div class="head">Минуты</div>
+          <div class="head">Факт, ч</div>
+          <div class="head">Норма, ч</div>
+          <div class="head">% к норме</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Детализация</h3>
+        <div style="margin-bottom: 10px;">
+          <label class="field" style="max-width: 360px;">
+            <span>Фильтр по клиенту</span>
+            <select id="clientFilter">
+              <option value="">Все клиенты</option>
+            </select>
+          </label>
+        </div>
+        <div style="overflow-x: auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Номер карты</th>
+                <th>Название карты</th>
+                <th>Клиент</th>
+                <th>Минуты</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- GitHub Pages: set your Cloudflare Worker base URL (https://....workers.dev), no trailing slash -->
+    <script>
+      window.KAITEN_PROXY_BASE_URL = "";
+    </script>
+    <script>
+      const baseUrlInput = document.getElementById("baseUrl");
+      const tokenInput = document.getElementById("token");
+      const fromDateInput = document.getElementById("fromDate");
+      const toDateInput = document.getElementById("toDate");
+      const configFileInput = document.getElementById("configFile");
+      const clientFilterEl = document.getElementById("clientFilter");
+      const loadBtn = document.getElementById("loadBtn");
+      const clearBtn = document.getElementById("clearBtn");
+      const statusEl = document.getElementById("status");
+      const configStatusEl = document.getElementById("configStatus");
+      const cardsCountEl = document.getElementById("cardsCount");
+      const minutesTotalEl = document.getElementById("minutesTotal");
+      const hoursTotalEl = document.getElementById("hoursTotal");
+      const clientsGridEl = document.getElementById("clientsGrid");
+      const rowsEl = document.getElementById("rows");
+
+      const formatLocalDate = (d) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+      };
+
+      const now = new Date();
+      const todayYyyyMmDd = formatLocalDate(now);
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+      const firstDayYyyyMmDd = formatLocalDate(firstDay);
+      fromDateInput.value = firstDayYyyyMmDd;
+      toDateInput.value = todayYyyyMmDd;
+
+      const _proxyOverride =
+        typeof window.KAITEN_PROXY_BASE_URL === "string" ? window.KAITEN_PROXY_BASE_URL.trim() : "";
+      const proxyBaseUrl = (_proxyOverride || "").replace(/\/+$/, "") || window.location.origin;
+
+      (() => {
+        const host = location.hostname || "";
+        const onGitHubPages = /\.github\.io$/i.test(host);
+        const missingProxy = !_proxyOverride;
+        if (onGitHubPages && missingProxy) {
+          const box = document.createElement("div");
+          box.className = "panel";
+          box.style.cssText =
+            "background:#fff3cd;border-color:#856404;margin-bottom:16px;font-size:0.95em;";
+          box.innerHTML =
+            "<strong>GitHub Pages.</strong> Укажите URL Cloudflare Worker в <code>index.html</code> " +
+            "(переменная <code>window.KAITEN_PROXY_BASE_URL</code>). Инструкция: файл <code>docs/pages-setup.txt</code> " +
+            "в репозитории. Прокси лежит в папке <code>worker/</code>.";
+          document.querySelector(".container")?.prepend(box);
+        }
+      })();
+
+      const REQUIRED_BOARD_NAME = "АККАУТИНГ";
+      let clientNormHoursMap = new Map();
+      let latestGroupedRows = [];
+
+      const getProxyApiUrl = (baseUrl, from, to) =>
+        `${proxyBaseUrl}/api/timesheet?baseUrl=${encodeURIComponent(baseUrl)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+      const getProxySelectValuesUrl = (baseUrl, propertyId) =>
+        `${proxyBaseUrl}/api/select-values?baseUrl=${encodeURIComponent(baseUrl)}&propertyId=${encodeURIComponent(propertyId)}`;
+
+      function parseMinutes(entry) {
+        if (typeof entry.time_spent === "number") return entry.time_spent;
+        if (typeof entry.timeSpent === "number") return entry.timeSpent;
+        if (typeof entry.minutes === "number") return entry.minutes;
+        return 0;
+      }
+
+      function parseDate(entry) {
+        return (
+          entry.created_at ||
+          entry.createdAt ||
+          entry.for_date ||
+          entry.forDate ||
+          entry.started_at ||
+          entry.startedAt ||
+          entry.date ||
+          null
+        );
+      }
+
+      function parseCardId(entry) {
+        return entry.card_id || entry.cardId || entry.card?.id || null;
+      }
+
+      function parseCardTitle(entry) {
+        return entry.card_title || entry.cardTitle || entry.card?.title || "";
+      }
+
+      function parseBoardName(entry) {
+        return (
+          entry.board_title ||
+          entry.boardTitle ||
+          entry.card?.board_title ||
+          entry.card?.boardTitle ||
+          entry.card?.board?.title ||
+          ""
+        );
+      }
+
+      function isRequiredBoard(entry) {
+        const boardName = String(parseBoardName(entry) || "").trim().toUpperCase();
+        return boardName === REQUIRED_BOARD_NAME;
+      }
+
+      function parseClientName(entry, selectMap = {}) {
+        const customId = "id_460456";
+        const cardProps = entry.card?.properties || entry.properties || {};
+        const raw = cardProps?.[customId];
+        if (raw == null) return "";
+        if (typeof raw === "string" || typeof raw === "number") {
+          const key = String(raw).trim();
+          return selectMap[key] || key;
+        }
+
+        if (Array.isArray(raw)) {
+          const labels = raw
+            .map((item) => {
+              if (item == null) return "";
+              if (typeof item === "string" || typeof item === "number") {
+                const key = String(item).trim();
+                return selectMap[key] || key;
+              }
+              return item.title || item.name || item.value || item.label || "";
+            })
+            .filter(Boolean);
+          return labels.join(", ").trim();
+        }
+
+        if (typeof raw === "object") {
+          const fromObject = raw.title || raw.name || raw.value || raw.label || "";
+          return String(fromObject).trim();
+        }
+
+        return "";
+      }
+
+      function inRange(dateValue, from, to) {
+        if (!dateValue) return false;
+        const d = new Date(dateValue);
+        if (Number.isNaN(d.getTime())) return false;
+        return d >= from && d <= to;
+      }
+
+      function toLocalEndOfDay(d) {
+        const copy = new Date(d);
+        copy.setHours(23, 59, 59, 999);
+        return copy;
+      }
+
+      function formatHours(minutes) {
+        const hours = minutes / 60;
+        return `${hours.toFixed(2)} ч (${minutes} мин)`;
+      }
+
+      function groupByCards(items, selectMap = {}) {
+        const grouped = new Map();
+
+        for (const item of items) {
+          const cardId = parseCardId(item);
+          const key = cardId == null ? `unknown:${parseCardTitle(item)}` : String(cardId);
+          const current = grouped.get(key) || {
+            cardId,
+            title: "",
+            client: "",
+            minutes: 0
+          };
+
+          const title = parseCardTitle(item);
+          if (!current.title && title) {
+            current.title = title;
+          }
+          const client = parseClientName(item, selectMap);
+          if (!current.client && client) {
+            current.client = client;
+          }
+          current.minutes += parseMinutes(item);
+          grouped.set(key, current);
+        }
+
+        return Array.from(grouped.values()).sort((a, b) => b.minutes - a.minutes);
+      }
+
+      function renderRows(rows, baseUrl) {
+        rowsEl.innerHTML = "";
+        for (const row of rows) {
+          const tr = document.createElement("tr");
+          const cardNumber = row.cardId == null ? "-" : String(row.cardId);
+          const cardUrl = row.cardId == null ? "" : `${baseUrl.replace(/\/+$/, "")}/${row.cardId}`;
+          const title = row.title || "-";
+          const client = row.client || "-";
+          tr.innerHTML = `
+            <td>${row.cardId == null ? "-" : `<a href="${escapeHtml(cardUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(cardNumber)}</a>`}</td>
+            <td>${escapeHtml(title)}</td>
+            <td>${escapeHtml(client)}</td>
+            <td>${row.minutes}</td>
+          `;
+          rowsEl.appendChild(tr);
+        }
+      }
+
+      function renderClientsSummary(rows, totalMinutes) {
+        clientsGridEl.innerHTML = `
+          <div class="head">Клиент</div>
+          <div class="head">% от суммы минут</div>
+          <div class="head">Факт, ч</div>
+          <div class="head">Норма, ч</div>
+          <div class="head">% к норме</div>
+        `;
+
+        const byClient = new Map();
+        for (const row of rows) {
+          const client = row.client || "-";
+          byClient.set(client, (byClient.get(client) || 0) + row.minutes);
+        }
+
+        const sorted = Array.from(byClient.entries()).sort((a, b) => b[1] - a[1]);
+        for (const [client, minutes] of sorted) {
+          const factHours = minutes / 60;
+          const hours = factHours.toFixed(2);
+          const norm = clientNormHoursMap.get(normalizeClientName(client));
+          const normText = typeof norm === "number" ? norm.toFixed(2) : "-";
+          const percentValue = typeof norm === "number" && norm > 0 ? (factHours / norm) * 100 : null;
+          const percentText = typeof percentValue === "number" ? `${percentValue.toFixed(2)}%` : "-";
+          const percentStyle = getPercentStyle(percentValue);
+          const percentOfTotal = totalMinutes > 0 ? `${((minutes / totalMinutes) * 100).toFixed(2)}%` : "-";
+          const clientCell = document.createElement("div");
+          const minutesPercentCell = document.createElement("div");
+          const factHoursCell = document.createElement("div");
+          const normHoursCell = document.createElement("div");
+          const percentCell = document.createElement("div");
+          clientCell.textContent = client;
+          minutesPercentCell.textContent = percentOfTotal;
+          factHoursCell.textContent = hours;
+          normHoursCell.textContent = normText;
+          percentCell.innerHTML =
+            percentText === "-"
+              ? "-"
+              : `<span class="percent-badge" style="${escapeHtml(percentStyle)}">${escapeHtml(percentText)}</span>`;
+          clientsGridEl.appendChild(clientCell);
+          clientsGridEl.appendChild(minutesPercentCell);
+          clientsGridEl.appendChild(factHoursCell);
+          clientsGridEl.appendChild(normHoursCell);
+          clientsGridEl.appendChild(percentCell);
+        }
+      }
+
+      function updateClientFilterOptions(rows) {
+        const previous = clientFilterEl.value;
+        const clients = Array.from(new Set(rows.map((r) => r.client || "-"))).sort((a, b) => a.localeCompare(b));
+        clientFilterEl.innerHTML = `<option value="">Все клиенты</option>`;
+        for (const client of clients) {
+          const option = document.createElement("option");
+          option.value = client;
+          option.textContent = client;
+          clientFilterEl.appendChild(option);
+        }
+        if (clients.includes(previous)) {
+          clientFilterEl.value = previous;
+        } else {
+          clientFilterEl.value = "";
+        }
+      }
+
+      function renderDetailsWithFilter(baseUrl) {
+        const selectedClient = clientFilterEl.value;
+        const rows = selectedClient
+          ? latestGroupedRows.filter((row) => (row.client || "-") === selectedClient)
+          : latestGroupedRows;
+        renderRows(rows, baseUrl);
+      }
+
+      function normalizeClientName(value) {
+        return String(value || "").trim().toLowerCase();
+      }
+
+      function getPercentStyle(percent) {
+        if (typeof percent !== "number") return "";
+        if (percent > 100) {
+          return "background:#ff4d4f55;";
+        }
+
+        // 0-20%: green, 20-100%: move gradually to brown.
+        const p = Math.max(0, Math.min(100, percent));
+        const from = { r: 34, g: 197, b: 94 };   // green
+        const to = { r: 150, g: 75, b: 0 };      // brown
+
+        const t = p <= 20 ? 0 : (p - 20) / 80;
+        const r = Math.round(from.r + (to.r - from.r) * t);
+        const g = Math.round(from.g + (to.g - from.g) * t);
+        const b = Math.round(from.b + (to.b - from.b) * t);
+        return `background:rgba(${r},${g},${b},0.35);`;
+      }
+
+      async function loadNormsFromFile(file) {
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: "array" });
+        const firstSheetName = wb.SheetNames[0];
+        const sheet = wb.Sheets[firstSheetName];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
+
+        const map = new Map();
+        for (let i = 1; i < rows.length; i += 1) {
+          const row = rows[i] || [];
+          const clientName = String(row[0] ?? "").trim();
+          if (!clientName) continue;
+          const rawHours = row[1];
+          const numHours = Number(String(rawHours ?? "").replace(",", "."));
+          if (!Number.isFinite(numHours)) continue;
+          map.set(normalizeClientName(clientName), numHours);
+        }
+        clientNormHoursMap = map;
+        configStatusEl.textContent = `Конфиг загружен: ${file.name}. Норм по клиентам: ${map.size}.`;
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      async function loadData() {
+        const baseUrl = baseUrlInput.value.trim();
+        const token = tokenInput.value.trim();
+        const fromDateRaw = fromDateInput.value;
+        const toDateRaw = toDateInput.value;
+
+        if (!baseUrl || !token || !fromDateRaw || !toDateRaw) {
+          statusEl.textContent = "Заполните URL, токен и обе даты.";
+          return;
+        }
+
+        const fromDate = new Date(fromDateRaw);
+        const toDate = toLocalEndOfDay(new Date(toDateRaw));
+
+        if (fromDate > toDate) {
+          statusEl.textContent = "Дата начала позже даты окончания.";
+          return;
+        }
+
+        statusEl.textContent = "Загружаем данные из Kaiten...";
+        cardsCountEl.textContent = "0";
+        minutesTotalEl.textContent = "0";
+        hoursTotalEl.textContent = "0.00";
+        rowsEl.innerHTML = "";
+
+        try {
+          const apiUrl = getProxyApiUrl(baseUrl, fromDateRaw, toDateRaw);
+          const commonHeaders = {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json"
+          };
+
+          const [response, selectResponse] = await Promise.all([
+            fetch(apiUrl, { method: "GET", headers: commonHeaders }),
+            fetch(getProxySelectValuesUrl(baseUrl, "460456"), { method: "GET", headers: commonHeaders })
+          ]);
+
+          if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`HTTP ${response.status}: ${text || "Ошибка API"}`);
+          }
+
+          const payload = await response.json();
+          const list = Array.isArray(payload) ? payload : payload?.items || payload?.data || [];
+          const filtered = list.filter((entry) => isRequiredBoard(entry));
+          let selectMap = {};
+          if (selectResponse.ok) {
+            const selectPayload = await selectResponse.json();
+            if (selectPayload?.map && typeof selectPayload.map === "object") {
+              selectMap = selectPayload.map;
+            }
+          }
+          const groupedRows = groupByCards(filtered, selectMap);
+          const totalMinutes = groupedRows.reduce((acc, entry) => acc + entry.minutes, 0);
+          const meta = payload?.meta;
+          latestGroupedRows = groupedRows;
+
+          statusEl.textContent = `Получено записей: ${list.length}. В периоде: ${filtered.length}.` +
+            (meta?.proxyVersion
+              ? `\nProxy: ${meta.proxyVersion}, режим: ${meta.pagingMode || "-"}, запросов к API: ${meta.requestsMade}, endpoint: ${meta.endpoint}`
+              : "");
+          cardsCountEl.textContent = String(groupedRows.length);
+          minutesTotalEl.textContent = String(totalMinutes);
+          hoursTotalEl.textContent = (totalMinutes / 60).toFixed(2);
+          updateClientFilterOptions(groupedRows);
+          renderDetailsWithFilter(baseUrl);
+          renderClientsSummary(groupedRows, totalMinutes);
+        } catch (error) {
+          const isFetchNetworkError =
+            error?.name === "TypeError" && String(error?.message || "").toLowerCase().includes("fetch");
+          if (isFetchNetworkError) {
+            const host = location.hostname || "";
+            const onPages = /\.github\.io$/i.test(host);
+            statusEl.textContent = onPages
+              ? "Сеть: не удалось связаться с прокси. Проверьте window.KAITEN_PROXY_BASE_URL и что Worker задеплоен."
+              : "Ошибка подключения к локальному proxy. Запусти start.bat или проверь http://127.0.0.1:8787.";
+            return;
+          }
+
+          statusEl.textContent = `Ошибка: ${error.message}`;
+        }
+      }
+
+      function clearAll() {
+        tokenInput.value = "";
+        statusEl.textContent = "Поля очищены.";
+        cardsCountEl.textContent = "0";
+        minutesTotalEl.textContent = "0";
+        hoursTotalEl.textContent = "0.00";
+        clientsGridEl.innerHTML = `
+          <div class="head">Клиент</div>
+          <div class="head">% от суммы минут</div>
+          <div class="head">Факт, ч</div>
+          <div class="head">Норма, ч</div>
+          <div class="head">% к норме</div>
+        `;
+        clientFilterEl.innerHTML = `<option value="">Все клиенты</option>`;
+        latestGroupedRows = [];
+        rowsEl.innerHTML = "";
+      }
+
+      loadBtn.addEventListener("click", loadData);
+      clearBtn.addEventListener("click", clearAll);
+      clientFilterEl.addEventListener("change", () => {
+        const baseUrl = baseUrlInput.value.trim();
+        renderDetailsWithFilter(baseUrl);
+      });
+      configFileInput.addEventListener("change", async (event) => {
+        try {
+          const file = event.target.files && event.target.files[0];
+          if (!file) {
+            clientNormHoursMap = new Map();
+            configStatusEl.textContent = "Конфиг норм не загружен.";
+            return;
+          }
+          await loadNormsFromFile(file);
+        } catch (error) {
+          clientNormHoursMap = new Map();
+          configStatusEl.textContent = `Ошибка загрузки xlsx: ${error.message}`;
+        }
+      });
+    </script>
+  </body>
+</html>
