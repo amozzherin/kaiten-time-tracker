@@ -289,8 +289,89 @@
       })();
 
       const REQUIRED_BOARD_NAME = "АККАУТИНГ";
+      /** Длинный период грузим частями — у Cloudflare Worker ~30 с на один HTTP-запрос. */
+      const TIMESHEET_CHUNK_DAYS = 7;
+      const FETCH_CHUNK_TIMEOUT_MS = 120_000;
+
       let clientNormHoursMap = new Map();
       let latestGroupedRows = [];
+
+      function parseLocalDate(yyyyMmDd) {
+        const [y, m, d] = yyyyMmDd.split("-").map((x) => Number(x));
+        return new Date(y, m - 1, d);
+      }
+
+      function splitDateRangeInclusive(fromRaw, toRaw, chunkDays) {
+        const fromDate = parseLocalDate(fromRaw);
+        const toDate = parseLocalDate(toRaw);
+        if (fromDate > toDate) return [];
+        const chunks = [];
+        let cur = new Date(fromDate);
+        while (cur <= toDate) {
+          const chunkEnd = new Date(cur);
+          chunkEnd.setDate(chunkEnd.getDate() + chunkDays - 1);
+          const actualEnd = chunkEnd > toDate ? toDate : chunkEnd;
+          chunks.push({ from: formatLocalDate(cur), to: formatLocalDate(actualEnd) });
+          cur = new Date(actualEnd);
+          cur.setDate(cur.getDate() + 1);
+        }
+        return chunks;
+      }
+
+      function timesheetChunksForRange(fromRaw, toRaw) {
+        const fromDate = parseLocalDate(fromRaw);
+        const toDate = parseLocalDate(toRaw);
+        const spanDays = Math.floor((toDate - fromDate) / 86400000) + 1;
+        if (spanDays <= TIMESHEET_CHUNK_DAYS) {
+          return [{ from: fromRaw, to: toRaw }];
+        }
+        return splitDateRangeInclusive(fromRaw, toRaw, TIMESHEET_CHUNK_DAYS);
+      }
+
+      function fetchWithTimeout(url, options, timeoutMs) {
+        const opts = { ...options };
+        if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+          opts.signal = AbortSignal.timeout(timeoutMs);
+        }
+        return fetch(url, opts);
+      }
+
+      function itemsFromTimesheetPayload(payload) {
+        if (Array.isArray(payload)) return payload;
+        return payload?.items || payload?.data || [];
+      }
+
+      async function fetchTimesheetAll(baseUrl, fromRaw, toRaw, headers, onProgress) {
+        const chunks = timesheetChunksForRange(fromRaw, toRaw);
+        const allItems = [];
+        const seenIds = new Set();
+
+        for (let i = 0; i < chunks.length; i += 1) {
+          const chunk = chunks[i];
+          onProgress?.(i + 1, chunks.length, chunk);
+          const apiUrl = getProxyApiUrl(baseUrl, chunk.from, chunk.to);
+          const response = await fetchWithTimeout(
+            apiUrl,
+            { method: "GET", headers },
+            FETCH_CHUNK_TIMEOUT_MS,
+          );
+          if (!response.ok) {
+            const text = await response.text();
+            const rangeHint = chunks.length > 1 ? ` (${chunk.from} — ${chunk.to})` : "";
+            throw new Error(`HTTP ${response.status}${rangeHint}: ${text || "Ошибка API"}`);
+          }
+          const payload = await response.json();
+          for (const entry of itemsFromTimesheetPayload(payload)) {
+            const id = entry?.id;
+            if (id != null && (typeof id === "number" || typeof id === "string")) {
+              if (seenIds.has(id)) continue;
+              seenIds.add(id);
+            }
+            allItems.push(entry);
+          }
+        }
+        return allItems;
+      }
 
       const getProxyApiUrl = (baseUrl, from, to) =>
         `${proxyBaseUrl}/api/timesheet?baseUrl=${encodeURIComponent(baseUrl)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
@@ -583,24 +664,31 @@
         const baseUrl = KAITEN_BASE_URL;
 
         try {
-          const apiUrl = getProxyApiUrl(baseUrl, fromDateRaw, toDateRaw);
           const commonHeaders = {
             Authorization: `Bearer ${token}`,
             Accept: "application/json"
           };
 
-          const [response, selectResponse] = await Promise.all([
-            fetch(apiUrl, { method: "GET", headers: commonHeaders }),
-            fetch(getProxySelectValuesUrl(baseUrl, "460456"), { method: "GET", headers: commonHeaders })
-          ]);
+          const selectPromise = fetchWithTimeout(
+            getProxySelectValuesUrl(baseUrl, "460456"),
+            { method: "GET", headers: commonHeaders },
+            FETCH_CHUNK_TIMEOUT_MS,
+          );
 
-          if (!response.ok) {
-            const text = await response.text();
-            throw new Error(`HTTP ${response.status}: ${text || "Ошибка API"}`);
-          }
+          const list = await fetchTimesheetAll(
+            baseUrl,
+            fromDateRaw,
+            toDateRaw,
+            commonHeaders,
+            (current, total, chunk) => {
+              statusEl.textContent =
+                total > 1
+                  ? `Загружаем данные из Kaiten… часть ${current}/${total} (${chunk.from} — ${chunk.to})`
+                  : "Загружаем данные из Kaiten...";
+            },
+          );
 
-          const payload = await response.json();
-          const list = Array.isArray(payload) ? payload : payload?.items || payload?.data || [];
+          const selectResponse = await selectPromise;
           const filtered = list.filter((entry) => isRequiredBoard(entry));
 
           let selectMap = {};
@@ -624,6 +712,13 @@
           renderDetailsWithFilter(baseUrl);
           renderClientsSummary(groupedRows, totalMinutes);
         } catch (error) {
+          const errName = error?.name || "";
+          if (errName === "TimeoutError" || errName === "AbortError") {
+            statusEl.textContent =
+              "Превышено время ожидания ответа прокси (2 мин на часть). Попробуйте снова или уменьшите период.";
+            return;
+          }
+
           const isFetchNetworkError =
             error?.name === "TypeError" && String(error?.message || "").toLowerCase().includes("fetch");
           if (isFetchNetworkError) {
