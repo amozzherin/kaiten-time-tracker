@@ -9,15 +9,25 @@
       :root {
         color-scheme: light dark;
       }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html,
       body {
+        width: 100%;
         margin: 0;
+      }
+      body {
         font-family: Arial, sans-serif;
         line-height: 1.4;
       }
       .container {
-        max-width: min(1600px, 96vw);
-        margin: 24px auto;
-        padding: 0 20px;
+        width: 100%;
+        max-width: none;
+        margin: 12px 0 24px;
+        padding: 0 clamp(10px, 1.2vw, 28px);
       }
       h1 {
         margin-top: 0;
@@ -115,24 +125,39 @@
         cursor: pointer;
       }
       .clients-table-wrap {
+        width: 100%;
         overflow-x: auto;
       }
-      .client-grid {
-        display: grid;
-        grid-template-columns:
-          minmax(150px, 1.4fr)
-          repeat(8, minmax(78px, 1fr));
-        gap: 6px;
+      .clients-table {
         width: 100%;
-        font-size: 0.92em;
+        table-layout: fixed;
+        border-collapse: collapse;
+        font-size: 0.9em;
       }
-      .client-grid .head {
+      .clients-table th,
+      .clients-table td {
+        border: 1px solid #7774;
+        padding: 8px 6px;
+        text-align: left;
+        vertical-align: top;
+        word-wrap: break-word;
+        overflow-wrap: anywhere;
+      }
+      .clients-table th {
         font-weight: 700;
+        font-size: 0.82em;
+        line-height: 1.25;
+        background: color-mix(in srgb, Canvas 92%, CanvasText 8%);
       }
-      .client-grid > div {
-        border: 1px solid #7773;
-        border-radius: 8px;
-        padding: 8px 10px;
+      .clients-table col.col-client {
+        width: 22%;
+      }
+      .clients-table td.num {
+        text-align: right;
+        white-space: nowrap;
+      }
+      .clients-table th.num {
+        text-align: right;
       }
       .percent-badge {
         display: inline-block;
@@ -148,8 +173,11 @@
         .metrics {
           grid-template-columns: 1fr;
         }
-        .client-grid {
-          grid-template-columns: 1fr;
+        .clients-table {
+          font-size: 0.82em;
+        }
+        .clients-table col.col-client {
+          width: 28%;
         }
       }
     </style>
@@ -219,17 +247,14 @@
           <span>Скрыть: ЛИЧНАЯ КАРТА, НЕПРОЕКТНОЕ РАЗВИТИЕ, ПРОДУКТ</span>
         </label>
         <div class="clients-table-wrap">
-          <div class="client-grid" id="clientsGrid">
-          <div class="head">Клиент</div>
-          <div class="head">% от суммы минут</div>
-          <div class="head">Факт, ч</div>
-          <div class="head">Нормо-часы, ч</div>
-          <div class="head">% использованного норматива</div>
-          <div class="head">Согласовано Сашей, ч</div>
-          <div class="head">Новые проекты, ч</div>
-          <div class="head">Критические инциденты, ч</div>
-          <div class="head">Неопределённые, ч</div>
-          </div>
+          <table class="clients-table" id="clientsTable">
+            <colgroup>
+              <col class="col-client" />
+              <col span="8" />
+            </colgroup>
+            <thead id="clientsTableHead"></thead>
+            <tbody id="clientsTableBody"></tbody>
+          </table>
         </div>
       </div>
 
@@ -280,7 +305,8 @@
       const cardsCountEl = document.getElementById("cardsCount");
       const minutesTotalEl = document.getElementById("minutesTotal");
       const hoursTotalEl = document.getElementById("hoursTotal");
-      const clientsGridEl = document.getElementById("clientsGrid");
+      const clientsTableHeadEl = document.getElementById("clientsTableHead");
+      const clientsTableBodyEl = document.getElementById("clientsTableBody");
       const rowsEl = document.getElementById("rows");
 
       const formatLocalDate = (d) => {
@@ -698,21 +724,30 @@
         }
       }
 
-      const CLIENT_GRID_HEADERS_HTML = `
-          <div class="head">Клиент</div>
-          <div class="head">% от суммы минут</div>
-          <div class="head">Факт, ч</div>
-          <div class="head">Нормо-часы, ч</div>
-          <div class="head">% использованного норматива</div>
-          <div class="head">Согласовано Сашей, ч</div>
-          <div class="head">Новые проекты, ч</div>
-          <div class="head">Критические инциденты, ч</div>
-          <div class="head">Неопределённые, ч</div>
-      `;
+      const CLIENT_TABLE_COLUMNS = [
+        { label: "Клиент", title: "Клиент", num: false },
+        { label: "% минут", title: "% от суммы минут", num: true },
+        { label: "Факт, ч", title: "Факт, ч", num: true },
+        { label: "Нормо-часы, ч", title: "Нормо-часы, ч", num: true },
+        { label: "% норм.", title: "% использованного норматива", num: true },
+        { label: "Согл. Сашей, ч", title: "Согласовано Сашей, ч", num: true },
+        { label: "Нов. проекты, ч", title: "Новые проекты, ч", num: true },
+        { label: "Крит. инц., ч", title: "Критические инциденты, ч", num: true },
+        { label: "Неопред., ч", title: "Неопределённые, ч", num: true },
+      ];
+
+      function renderClientsTableHead() {
+        const cells = CLIENT_TABLE_COLUMNS.map((col) => {
+          const cls = col.num ? ' class="num"' : "";
+          return `<th${cls} title="${escapeHtml(col.title)}">${escapeHtml(col.label)}</th>`;
+        }).join("");
+        clientsTableHeadEl.innerHTML = `<tr>${cells}</tr>`;
+      }
 
       function renderClientsSummary(byClient, totalMinutes) {
-        clientsGridEl.innerHTML = CLIENT_GRID_HEADERS_HTML;
+        renderClientsTableHead();
 
+        const rows = [];
         const sorted = Array.from(byClient.entries()).sort((a, b) => b[1].total - a[1].total);
         for (const [client, agg] of sorted) {
           if (isClientRowHiddenInSummary(client)) continue;
@@ -725,30 +760,24 @@
           const percentText = typeof percentValue === "number" ? `${percentValue.toFixed(2)}%` : "-";
           const percentStyle = getPercentStyle(percentValue);
           const percentOfTotal = totalMinutes > 0 ? `${((minutes / totalMinutes) * 100).toFixed(2)}%` : "-";
-          const clientCell = document.createElement("div");
-          const minutesPercentCell = document.createElement("div");
-          const factHoursCell = document.createElement("div");
-          const normHoursCell = document.createElement("div");
-          const percentCell = document.createElement("div");
-          clientCell.textContent = client;
-          minutesPercentCell.textContent = percentOfTotal;
-          factHoursCell.textContent = formatHoursFromMinutes(agg.total);
-          normHoursCell.textContent = formatHoursFromMinutes(agg.norm);
-          percentCell.innerHTML =
+          const percentCell =
             percentText === "-"
               ? "-"
               : `<span class="percent-badge" style="${escapeHtml(percentStyle)}">${escapeHtml(percentText)}</span>`;
-          clientsGridEl.appendChild(clientCell);
-          clientsGridEl.appendChild(minutesPercentCell);
-          clientsGridEl.appendChild(factHoursCell);
-          clientsGridEl.appendChild(normHoursCell);
-          clientsGridEl.appendChild(percentCell);
-          for (const key of ["agreed", "newProjects", "critical", "undefined"]) {
-            const cell = document.createElement("div");
-            cell.textContent = formatHoursFromMinutes(agg[key]);
-            clientsGridEl.appendChild(cell);
-          }
+
+          rows.push(`<tr>
+            <td>${escapeHtml(client)}</td>
+            <td class="num">${escapeHtml(percentOfTotal)}</td>
+            <td class="num">${escapeHtml(formatHoursFromMinutes(agg.total))}</td>
+            <td class="num">${escapeHtml(formatHoursFromMinutes(agg.norm))}</td>
+            <td class="num">${percentCell}</td>
+            <td class="num">${escapeHtml(formatHoursFromMinutes(agg.agreed))}</td>
+            <td class="num">${escapeHtml(formatHoursFromMinutes(agg.newProjects))}</td>
+            <td class="num">${escapeHtml(formatHoursFromMinutes(agg.critical))}</td>
+            <td class="num">${escapeHtml(formatHoursFromMinutes(agg.undefined))}</td>
+          </tr>`);
         }
+        clientsTableBodyEl.innerHTML = rows.join("");
       }
 
       function updateClientFilterOptions(rows) {
@@ -939,13 +968,16 @@
         cardsCountEl.textContent = "0";
         minutesTotalEl.textContent = "0";
         hoursTotalEl.textContent = "0.00";
-        clientsGridEl.innerHTML = CLIENT_GRID_HEADERS_HTML;
+        renderClientsTableHead();
+        clientsTableBodyEl.innerHTML = "";
         clientFilterEl.innerHTML = `<option value="">Все клиенты</option>`;
         latestGroupedRows = [];
         latestByClient = new Map();
         latestTotalMinutes = 0;
         rowsEl.innerHTML = "";
       }
+
+      renderClientsTableHead();
 
       loadBtn.addEventListener("click", loadData);
       clearBtn.addEventListener("click", clearAll);
