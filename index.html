@@ -275,8 +275,9 @@
                 <th>Номер карты</th>
                 <th>Название карты</th>
                 <th>Клиент</th>
-                <th>Минут по карте всего</th>
-                <th>Часов по карте всего</th>
+                <th>Тип списания часов</th>
+                <th>Минут</th>
+                <th>Часов</th>
               </tr>
             </thead>
             <tbody id="rows"></tbody>
@@ -657,7 +658,7 @@
         return copy;
       }
 
-      function accumulateByCard(items, selectMap = {}) {
+      function accumulateByCard(items, clientSelectMap = {}, hourTypeSelectMap = {}) {
         const grouped = new Map();
         for (const item of items) {
           const cardId = parseCardId(item);
@@ -666,6 +667,7 @@
             cardId,
             title: "",
             client: "",
+            hourType: "",
             minutes: 0
           };
 
@@ -673,9 +675,13 @@
           if (!current.title && title) {
             current.title = title;
           }
-          const client = parseClientName(item, selectMap);
+          const client = parseClientName(item, clientSelectMap);
           if (!current.client && client) {
             current.client = client;
+          }
+          const hourType = parseHourTypeLabel(item, hourTypeSelectMap);
+          if (!current.hourType && hourType) {
+            current.hourType = hourType;
           }
           current.minutes += parseMinutes(item);
           grouped.set(key, current);
@@ -684,8 +690,8 @@
       }
 
       /** Один запрос таймшита: сумма минут по карте из ответа (Kaiten режет по from/to). */
-      function buildCardRowsFromTimesheet(items, selectMap = {}) {
-        const map = accumulateByCard(items, selectMap);
+      function buildCardRowsFromTimesheet(items, clientSelectMap = {}, hourTypeSelectMap = {}) {
+        const map = accumulateByCard(items, clientSelectMap, hourTypeSelectMap);
         const rows = [];
         for (const [, v] of map) {
           const m = v.minutes ?? 0;
@@ -693,6 +699,7 @@
             cardId: v.cardId,
             title: (v.title || "").trim(),
             client: (v.client || "").trim(),
+            hourType: (v.hourType || "").trim(),
             minutes: m
           });
         }
@@ -711,12 +718,14 @@
           const cardUrl = row.cardId == null ? "" : `${baseUrl.replace(/\/+$/, "")}/${row.cardId}`;
           const title = row.title || "-";
           const client = row.client || "-";
+          const hourType = row.hourType || "-";
           const m = row.minutes ?? 0;
           const h = (m / 60).toFixed(2);
           tr.innerHTML = `
             <td>${row.cardId == null ? "-" : `<a href="${escapeHtml(cardUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(cardNumber)}</a>`}</td>
             <td>${escapeHtml(title)}</td>
             <td>${escapeHtml(client)}</td>
+            <td>${escapeHtml(hourType)}</td>
             <td>${m}</td>
             <td>${h}</td>
           `;
@@ -927,7 +936,7 @@
             loadSelectMap(baseUrl, HOUR_TYPE_PROPERTY_ID, commonHeaders),
           ]);
 
-          const groupedRows = buildCardRowsFromTimesheet(filtered, clientSelectMap);
+          const groupedRows = buildCardRowsFromTimesheet(filtered, clientSelectMap, hourTypeSelectMap);
           const totalMinutes = groupedRows.reduce((acc, entry) => acc + (entry.minutes ?? 0), 0);
           latestGroupedRows = groupedRows;
           const byClient = aggregateByClientAndHourType(filtered, clientSelectMap, hourTypeSelectMap);
