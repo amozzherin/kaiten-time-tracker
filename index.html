@@ -102,10 +102,23 @@
         border-radius: 8px;
         font-size: 0.92em;
       }
+      .clients-table-wrap {
+        overflow-x: auto;
+      }
       .client-grid {
         display: grid;
-        grid-template-columns: minmax(220px, 1.7fr) minmax(100px, 0.8fr) minmax(110px, 0.9fr) minmax(110px, 0.9fr) minmax(120px, 1fr);
+        grid-template-columns:
+          minmax(140px, 1.3fr)
+          minmax(72px, 0.7fr)
+          minmax(72px, 0.7fr)
+          minmax(88px, 0.8fr)
+          minmax(88px, 0.85fr)
+          minmax(88px, 0.85fr)
+          minmax(88px, 0.85fr)
+          minmax(88px, 0.85fr)
+          minmax(88px, 0.85fr);
         gap: 8px;
+        min-width: 980px;
       }
       .client-grid .head {
         font-weight: 700;
@@ -195,12 +208,18 @@
 
       <div class="panel">
         <h3>По клиентам</h3>
-        <div class="client-grid" id="clientsGrid">
+        <div class="clients-table-wrap">
+          <div class="client-grid" id="clientsGrid">
           <div class="head">Клиент</div>
           <div class="head">% от суммы минут</div>
           <div class="head">Факт, ч</div>
-          <div class="head">Норма, ч</div>
-          <div class="head">% к норме</div>
+          <div class="head">Нормо-часы, ч</div>
+          <div class="head">% использованного норматива</div>
+          <div class="head">Согласовано с Сашей, ч</div>
+          <div class="head">Новые проекты, ч</div>
+          <div class="head">Критические инциденты, ч</div>
+          <div class="head">Неопределённые, ч</div>
+          </div>
         </div>
       </div>
 
@@ -299,6 +318,8 @@
 
       let clientNormHoursMap = new Map();
       let latestGroupedRows = [];
+      let latestByClient = new Map();
+      let latestTotalMinutes = 0;
 
       function parseLocalDate(yyyyMmDd) {
         const [y, m, d] = yyyyMmDd.split("-").map((x) => Number(x));
@@ -487,8 +508,17 @@
         return boardName === REQUIRED_BOARD_NAME;
       }
 
-      function parseClientName(entry, selectMap = {}) {
-        const customId = "id_460456";
+      const CLIENT_PROPERTY_ID = "460456";
+      const HOUR_TYPE_PROPERTY_ID = "590276";
+      const HOUR_TYPE_LABELS = {
+        norm: "Нормо-часы",
+        agreed: "Согласовано с Сашей",
+        newProjects: "Новые проекты",
+        critical: "Критический инцидент",
+      };
+
+      function parseSelectProperty(entry, propertyId, selectMap = {}) {
+        const customId = `id_${propertyId}`;
         const cardProps = entry.card?.properties || entry.properties || {};
         const raw = cardProps?.[customId];
         if (raw == null) return "";
@@ -517,6 +547,69 @@
         }
 
         return "";
+      }
+
+      function parseClientName(entry, selectMap = {}) {
+        return parseSelectProperty(entry, CLIENT_PROPERTY_ID, selectMap);
+      }
+
+      function parseHourTypeLabel(entry, selectMap = {}) {
+        return parseSelectProperty(entry, HOUR_TYPE_PROPERTY_ID, selectMap);
+      }
+
+      function normalizeLabel(value) {
+        return String(value || "").trim().toLowerCase();
+      }
+
+      function classifyHourType(rawLabel) {
+        const n = normalizeLabel(rawLabel);
+        if (!n) return "undefined";
+        if (n === normalizeLabel(HOUR_TYPE_LABELS.norm)) return "norm";
+        if (n === normalizeLabel(HOUR_TYPE_LABELS.agreed)) return "agreed";
+        if (n === normalizeLabel(HOUR_TYPE_LABELS.newProjects)) return "newProjects";
+        if (n === normalizeLabel(HOUR_TYPE_LABELS.critical)) return "critical";
+        return "undefined";
+      }
+
+      function emptyClientAggregate() {
+        return {
+          total: 0,
+          norm: 0,
+          agreed: 0,
+          newProjects: 0,
+          critical: 0,
+          undefined: 0,
+        };
+      }
+
+      function aggregateByClientAndHourType(items, clientSelectMap, hourTypeSelectMap) {
+        const byClient = new Map();
+        for (const item of items) {
+          const client = parseClientName(item, clientSelectMap) || "-";
+          const hourType = classifyHourType(parseHourTypeLabel(item, hourTypeSelectMap));
+          const minutes = parseMinutes(item);
+          const row = byClient.get(client) || emptyClientAggregate();
+          row.total += minutes;
+          row[hourType] += minutes;
+          byClient.set(client, row);
+        }
+        return byClient;
+      }
+
+      function formatHoursFromMinutes(minutes) {
+        return (minutes / 60).toFixed(2);
+      }
+
+      async function loadSelectMap(baseUrl, propertyId, headers) {
+        const response = await fetchWithTimeout(
+          getProxySelectValuesUrl(baseUrl, propertyId),
+          { method: "GET", headers },
+          FETCH_CHUNK_TIMEOUT_MS,
+        );
+        if (!response.ok) return {};
+        const payload = await response.json();
+        if (payload?.map && typeof payload.map === "object") return payload.map;
+        return {};
       }
 
       function toLocalEndOfDay(d) {
@@ -592,28 +685,28 @@
         }
       }
 
-      function renderClientsSummary(rows, totalMinutes) {
-        clientsGridEl.innerHTML = `
+      const CLIENT_GRID_HEADERS_HTML = `
           <div class="head">Клиент</div>
           <div class="head">% от суммы минут</div>
           <div class="head">Факт, ч</div>
-          <div class="head">Норма, ч</div>
-          <div class="head">% к норме</div>
-        `;
+          <div class="head">Нормо-часы, ч</div>
+          <div class="head">% использованного норматива</div>
+          <div class="head">Согласовано с Сашей, ч</div>
+          <div class="head">Новые проекты, ч</div>
+          <div class="head">Критические инциденты, ч</div>
+          <div class="head">Неопределённые, ч</div>
+      `;
 
-        const byClient = new Map();
-        for (const row of rows) {
-          const client = row.client || "-";
-          byClient.set(client, (byClient.get(client) || 0) + (row.minutes ?? 0));
-        }
+      function renderClientsSummary(byClient, totalMinutes) {
+        clientsGridEl.innerHTML = CLIENT_GRID_HEADERS_HTML;
 
-        const sorted = Array.from(byClient.entries()).sort((a, b) => b[1] - a[1]);
-        for (const [client, minutes] of sorted) {
-          const factHours = minutes / 60;
-          const hours = factHours.toFixed(2);
-          const norm = clientNormHoursMap.get(normalizeClientName(client));
-          const normText = typeof norm === "number" ? norm.toFixed(2) : "-";
-          const percentValue = typeof norm === "number" && norm > 0 ? (factHours / norm) * 100 : null;
+        const sorted = Array.from(byClient.entries()).sort((a, b) => b[1].total - a[1].total);
+        for (const [client, agg] of sorted) {
+          const minutes = agg.total;
+          const normHoursFact = agg.norm / 60;
+          const configNorm = clientNormHoursMap.get(normalizeClientName(client));
+          const percentValue =
+            typeof configNorm === "number" && configNorm > 0 ? (normHoursFact / configNorm) * 100 : null;
           const percentText = typeof percentValue === "number" ? `${percentValue.toFixed(2)}%` : "-";
           const percentStyle = getPercentStyle(percentValue);
           const percentOfTotal = totalMinutes > 0 ? `${((minutes / totalMinutes) * 100).toFixed(2)}%` : "-";
@@ -624,8 +717,8 @@
           const percentCell = document.createElement("div");
           clientCell.textContent = client;
           minutesPercentCell.textContent = percentOfTotal;
-          factHoursCell.textContent = hours;
-          normHoursCell.textContent = normText;
+          factHoursCell.textContent = formatHoursFromMinutes(agg.total);
+          normHoursCell.textContent = formatHoursFromMinutes(agg.norm);
           percentCell.innerHTML =
             percentText === "-"
               ? "-"
@@ -635,6 +728,11 @@
           clientsGridEl.appendChild(factHoursCell);
           clientsGridEl.appendChild(normHoursCell);
           clientsGridEl.appendChild(percentCell);
+          for (const key of ["agreed", "newProjects", "critical", "undefined"]) {
+            const cell = document.createElement("div");
+            cell.textContent = formatHoursFromMinutes(agg[key]);
+            clientsGridEl.appendChild(cell);
+          }
         }
       }
 
@@ -765,25 +863,20 @@
             },
           );
 
-          statusEl.textContent = "Загружаем справочник клиентов...";
-          const selectResponse = await fetchWithTimeout(
-            getProxySelectValuesUrl(baseUrl, "460456"),
-            { method: "GET", headers: commonHeaders },
-            FETCH_CHUNK_TIMEOUT_MS,
-          );
           const filtered = list.filter((entry) => isRequiredBoard(entry));
 
-          let selectMap = {};
-          if (selectResponse.ok) {
-            const selectPayload = await selectResponse.json();
-            if (selectPayload?.map && typeof selectPayload.map === "object") {
-              selectMap = selectPayload.map;
-            }
-          }
+          statusEl.textContent = "Загружаем справочники полей...";
+          const [clientSelectMap, hourTypeSelectMap] = await Promise.all([
+            loadSelectMap(baseUrl, CLIENT_PROPERTY_ID, commonHeaders),
+            loadSelectMap(baseUrl, HOUR_TYPE_PROPERTY_ID, commonHeaders),
+          ]);
 
-          const groupedRows = buildCardRowsFromTimesheet(filtered, selectMap);
+          const groupedRows = buildCardRowsFromTimesheet(filtered, clientSelectMap);
           const totalMinutes = groupedRows.reduce((acc, entry) => acc + (entry.minutes ?? 0), 0);
           latestGroupedRows = groupedRows;
+          const byClient = aggregateByClientAndHourType(filtered, clientSelectMap, hourTypeSelectMap);
+          latestByClient = byClient;
+          latestTotalMinutes = totalMinutes;
 
           statusEl.textContent = "Данные загружены.";
           const cardsInPeriod = groupedRows.filter((r) => (r.minutes ?? 0) > 0).length;
@@ -792,7 +885,7 @@
           hoursTotalEl.textContent = (totalMinutes / 60).toFixed(2);
           updateClientFilterOptions(groupedRows);
           renderDetailsWithFilter(baseUrl);
-          renderClientsSummary(groupedRows, totalMinutes);
+          renderClientsSummary(byClient, totalMinutes);
         } catch (error) {
           const part =
             error?.chunkIndex != null
@@ -819,15 +912,11 @@
         cardsCountEl.textContent = "0";
         minutesTotalEl.textContent = "0";
         hoursTotalEl.textContent = "0.00";
-        clientsGridEl.innerHTML = `
-          <div class="head">Клиент</div>
-          <div class="head">% от суммы минут</div>
-          <div class="head">Факт, ч</div>
-          <div class="head">Норма, ч</div>
-          <div class="head">% к норме</div>
-        `;
+        clientsGridEl.innerHTML = CLIENT_GRID_HEADERS_HTML;
         clientFilterEl.innerHTML = `<option value="">Все клиенты</option>`;
         latestGroupedRows = [];
+        latestByClient = new Map();
+        latestTotalMinutes = 0;
         rowsEl.innerHTML = "";
       }
 
@@ -845,6 +934,9 @@
             return;
           }
           await loadNormsFromFile(file);
+          if (latestByClient.size > 0) {
+            renderClientsSummary(latestByClient, latestTotalMinutes);
+          }
         } catch (error) {
           clientNormHoursMap = new Map();
           configStatusEl.textContent = `Ошибка загрузки xlsx (нормо-часы): ${error.message}`;
