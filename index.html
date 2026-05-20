@@ -15,9 +15,9 @@
         line-height: 1.4;
       }
       .container {
-        max-width: 920px;
+        max-width: min(1600px, 96vw);
         margin: 24px auto;
-        padding: 0 16px;
+        padding: 0 20px;
       }
       h1 {
         margin-top: 0;
@@ -102,23 +102,29 @@
         border-radius: 8px;
         font-size: 0.92em;
       }
+      .clients-hide-internal {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        margin: 0 0 12px;
+        font-size: 0.92em;
+        cursor: pointer;
+      }
+      .clients-hide-internal input {
+        margin-top: 3px;
+        cursor: pointer;
+      }
       .clients-table-wrap {
         overflow-x: auto;
       }
       .client-grid {
         display: grid;
         grid-template-columns:
-          minmax(140px, 1.3fr)
-          minmax(72px, 0.7fr)
-          minmax(72px, 0.7fr)
-          minmax(88px, 0.8fr)
-          minmax(88px, 0.85fr)
-          minmax(88px, 0.85fr)
-          minmax(88px, 0.85fr)
-          minmax(88px, 0.85fr)
-          minmax(88px, 0.85fr);
-        gap: 8px;
-        min-width: 980px;
+          minmax(150px, 1.4fr)
+          repeat(8, minmax(78px, 1fr));
+        gap: 6px;
+        width: 100%;
+        font-size: 0.92em;
       }
       .client-grid .head {
         font-weight: 700;
@@ -208,6 +214,10 @@
 
       <div class="panel">
         <h3>По клиентам</h3>
+        <label class="clients-hide-internal">
+          <input id="hideInternalClients" type="checkbox" checked />
+          <span>Скрыть: ЛИЧНАЯ КАРТА, НЕПРОЕКТНОЕ РАЗВИТИЕ, ПРОДУКТ</span>
+        </label>
         <div class="clients-table-wrap">
           <div class="client-grid" id="clientsGrid">
           <div class="head">Клиент</div>
@@ -215,7 +225,7 @@
           <div class="head">Факт, ч</div>
           <div class="head">Нормо-часы, ч</div>
           <div class="head">% использованного норматива</div>
-          <div class="head">Согласовано с Сашей, ч</div>
+          <div class="head">Согласовано Сашей, ч</div>
           <div class="head">Новые проекты, ч</div>
           <div class="head">Критические инциденты, ч</div>
           <div class="head">Неопределённые, ч</div>
@@ -262,6 +272,7 @@
       const toDateInput = document.getElementById("toDate");
       const configFileInput = document.getElementById("configFile");
       const clientFilterEl = document.getElementById("clientFilter");
+      const hideInternalClientsEl = document.getElementById("hideInternalClients");
       const loadBtn = document.getElementById("loadBtn");
       const clearBtn = document.getElementById("clearBtn");
       const statusEl = document.getElementById("status");
@@ -512,7 +523,7 @@
       const HOUR_TYPE_PROPERTY_ID = "590276";
       const HOUR_TYPE_LABELS = {
         norm: "Нормо-часы",
-        agreed: "Согласовано с Сашей",
+        agreed: "Согласовано Сашей",
         newProjects: "Новые проекты",
         critical: "Критический инцидент",
       };
@@ -565,7 +576,9 @@
         const n = normalizeLabel(rawLabel);
         if (!n) return "undefined";
         if (n === normalizeLabel(HOUR_TYPE_LABELS.norm)) return "norm";
-        if (n === normalizeLabel(HOUR_TYPE_LABELS.agreed)) return "agreed";
+        if (n === normalizeLabel(HOUR_TYPE_LABELS.agreed) || n === normalizeLabel("Согласовано с Сашей")) {
+          return "agreed";
+        }
         if (n === normalizeLabel(HOUR_TYPE_LABELS.newProjects)) return "newProjects";
         if (n === normalizeLabel(HOUR_TYPE_LABELS.critical)) return "critical";
         return "undefined";
@@ -691,7 +704,7 @@
           <div class="head">Факт, ч</div>
           <div class="head">Нормо-часы, ч</div>
           <div class="head">% использованного норматива</div>
-          <div class="head">Согласовано с Сашей, ч</div>
+          <div class="head">Согласовано Сашей, ч</div>
           <div class="head">Новые проекты, ч</div>
           <div class="head">Критические инциденты, ч</div>
           <div class="head">Неопределённые, ч</div>
@@ -702,6 +715,8 @@
 
         const sorted = Array.from(byClient.entries()).sort((a, b) => b[1].total - a[1].total);
         for (const [client, agg] of sorted) {
+          if (isClientRowHiddenInSummary(client)) continue;
+
           const minutes = agg.total;
           const normHoursFact = agg.norm / 60;
           const configNorm = clientNormHoursMap.get(normalizeClientName(client));
@@ -763,6 +778,18 @@
 
       function normalizeClientName(value) {
         return String(value || "").trim().toLowerCase();
+      }
+
+      const INTERNAL_CLIENT_KEYS = new Set(
+        ["ЛИЧНАЯ КАРТА", "НЕПРОЕКТНОЕ РАЗВИТИЕ", "ПРОДУКТ"].map(normalizeClientName),
+      );
+
+      function isInternalClient(clientName) {
+        return INTERNAL_CLIENT_KEYS.has(normalizeClientName(clientName));
+      }
+
+      function isClientRowHiddenInSummary(clientName) {
+        return (hideInternalClientsEl?.checked ?? true) && isInternalClient(clientName);
       }
 
       function getPercentStyle(percent) {
@@ -924,6 +951,11 @@
       clearBtn.addEventListener("click", clearAll);
       clientFilterEl.addEventListener("change", () => {
         renderDetailsWithFilter(KAITEN_BASE_URL);
+      });
+      hideInternalClientsEl.addEventListener("change", () => {
+        if (latestByClient.size > 0) {
+          renderClientsSummary(latestByClient, latestTotalMinutes);
+        }
       });
       configFileInput.addEventListener("change", async (event) => {
         try {
