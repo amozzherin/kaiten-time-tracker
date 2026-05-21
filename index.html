@@ -433,7 +433,7 @@
           <table class="clients-table" id="clientsTable">
             <colgroup>
               <col class="col-client" />
-              <col span="8" />
+              <col span="9" />
             </colgroup>
             <thead id="clientsTableHead"></thead>
             <tbody id="clientsTableBody"></tbody>
@@ -446,8 +446,8 @@
           <h3>Детализация</h3>
           <button id="downloadDetailsBtn" type="button" class="secondary" disabled>Скачать xlsx</button>
         </div>
-        <div style="margin-bottom: 10px;">
-          <label class="field client-filter-field" style="max-width: 420px;">
+        <div class="details-filters" style="display: flex; flex-wrap: wrap; gap: 12px 20px; margin-bottom: 10px;">
+          <label class="field client-filter-field" style="max-width: 420px; flex: 1 1 280px;">
             <span>Фильтр по клиенту</span>
             <div class="client-filter-combo">
               <input
@@ -458,6 +458,17 @@
               />
               <ul id="clientFilterSuggestions" class="client-filter-suggestions" hidden></ul>
             </div>
+          </label>
+          <label class="field" style="max-width: 320px; flex: 1 1 220px;">
+            <span>Фильтр по типу списания часов</span>
+            <select id="hourTypeFilter">
+              <option value="">Все типы</option>
+              <option value="norm">Нормо-часы</option>
+              <option value="agreed">Согласовано Сашей</option>
+              <option value="newProjects">Новые проекты</option>
+              <option value="critical">Критический инцидент</option>
+              <option value="undefined">Неопределённые</option>
+            </select>
           </label>
         </div>
         <div style="overflow-x: auto">
@@ -491,6 +502,7 @@
       const configFileInput = document.getElementById("configFile");
       const clientFilterInputEl = document.getElementById("clientFilterInput");
       const clientFilterSuggestionsEl = document.getElementById("clientFilterSuggestions");
+      const hourTypeFilterEl = document.getElementById("hourTypeFilter");
       const hideInternalClientsEl = document.getElementById("hideInternalClients");
       const loadBtn = document.getElementById("loadBtn");
       const clearBtn = document.getElementById("clearBtn");
@@ -957,6 +969,7 @@
 
       const CLIENT_TABLE_COLUMNS = [
         { label: "Клиент", title: "Клиент", num: false },
+        { label: "Нормо-ч, ч", title: "Нормо-часы по конфигу", num: true },
         { label: "% минут", title: "% от суммы минут", num: true },
         { label: "Факт, ч", title: "Факт, ч", num: true },
         { label: "Нормо-часы, ч", title: "Нормо-часы, ч", num: true },
@@ -1002,6 +1015,7 @@
 
           rows.push(`<tr>
             <td>${escapeHtml(client)}</td>
+            <td class="num">${escapeHtml(formatConfigNormHoursCell(client))}</td>
             <td class="num">${escapeHtml(percentOfTotal)}</td>
             <td class="num">${escapeHtml(formatHoursFromMinutes(agg.total))}</td>
             <td class="num">${escapeHtml(formatHoursFromMinutes(agg.norm))}</td>
@@ -1144,6 +1158,11 @@
         return cfg ? cfg.normHours : undefined;
       }
 
+      function formatConfigNormHoursCell(clientName) {
+        const configNorm = getClientNormHours(clientName);
+        return typeof configNorm === "number" ? configNorm.toFixed(2) : "-";
+      }
+
       function getClientTeamFilterKey(clientName) {
         const cfg = getClientConfig(clientName);
         if (!cfg) return TEAM_UNDEFINED_LABEL;
@@ -1168,11 +1187,24 @@
         return true;
       }
 
+      function getHourTypeFilterSelection() {
+        return hourTypeFilterEl?.value ?? "";
+      }
+
+      function rowMatchesHourTypeFilter(row, hourTypeFilter) {
+        if (!hourTypeFilter) return true;
+        return classifyHourType(row.hourType || "") === hourTypeFilter;
+      }
+
       function getFilteredDetailsRows() {
         const selectedClient = getClientFilterSelection();
+        const hourTypeFilter = getHourTypeFilterSelection();
         let rows = latestGroupedRows;
         if (selectedClient) {
           rows = rows.filter((row) => (row.client || "-") === selectedClient);
+        }
+        if (hourTypeFilter) {
+          rows = rows.filter((row) => rowMatchesHourTypeFilter(row, hourTypeFilter));
         }
         return rows.filter((row) => isClientVisibleInClientsTable(row.client || "-"));
       }
@@ -1447,7 +1479,7 @@
       }
 
       const EXCEL_PERCENT_NUMFMT = "0.00%";
-      const CLIENTS_EXPORT_PERCENT_COLS = [1, 4];
+      const CLIENTS_EXPORT_PERCENT_COLS = [2, 5];
 
       function formatCellForXlsxExport(value) {
         if (value == null) return "";
@@ -1544,7 +1576,7 @@
       function getClientsExportCellStyle(rowIndex, colIndex, _cellValue, row) {
         if (rowIndex === 0) return makeExcelHeaderStyle();
         const style = { numFmt: CLIENTS_EXPORT_PERCENT_COLS.includes(colIndex) ? EXCEL_PERCENT_NUMFMT : undefined };
-        if (colIndex === 4 && row) {
+        if (colIndex === 5 && row) {
           const client = row[0];
           const agg = latestByClient.get(client);
           if (!agg) return style.numFmt ? style : null;
@@ -1614,6 +1646,7 @@
             typeof percentValue === "number" ? percentDisplayToExcelFraction(percentValue) : null;
           dataRows.push([
             client,
+            typeof configNorm === "number" ? configNorm : "-",
             percentOfTotalFraction ?? "-",
             formatHoursFromMinutes(agg.total),
             formatHoursFromMinutes(agg.norm),
@@ -1861,6 +1894,7 @@
         setClientFilterSelection("");
         clientFilterOptionsList = [];
         hideClientFilterSuggestions();
+        if (hourTypeFilterEl) hourTypeFilterEl.value = "";
         latestGroupedRows = [];
         latestByClient = new Map();
         latestTotalMinutes = 0;
@@ -1922,6 +1956,11 @@
           hideClientFilterSuggestions();
         }
       });
+      if (hourTypeFilterEl) {
+        hourTypeFilterEl.addEventListener("change", () => {
+          refreshViewsAfterFilterChange();
+        });
+      }
       hideInternalClientsEl.addEventListener("change", () => {
         refreshViewsAfterFilterChange();
       });
