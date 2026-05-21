@@ -16,6 +16,16 @@
         --muted-bg: #e8eaed;
         --link: #1a5fb4;
         --accent: #1a5fb4;
+        --hour-norm-rgb: 124, 58, 237;
+        --hour-norm-a: 0.22;
+        --hour-agreed-rgb: 37, 99, 235;
+        --hour-agreed-a: 0.2;
+        --hour-newProjects-rgb: 22, 163, 74;
+        --hour-newProjects-a: 0.2;
+        --hour-critical-rgb: 220, 38, 38;
+        --hour-critical-a: 0.2;
+        --hour-undefined-rgb: 154, 160, 166;
+        --hour-undefined-a: 0.2;
       }
       [data-theme="dark"] {
         color-scheme: dark;
@@ -26,6 +36,16 @@
         --muted-bg: #383d45;
         --link: #6cb6ff;
         --accent: #6cb6ff;
+        --hour-norm-rgb: 124, 58, 237;
+        --hour-norm-a: 0.22;
+        --hour-agreed-rgb: 37, 99, 235;
+        --hour-agreed-a: 0.2;
+        --hour-newProjects-rgb: 22, 163, 74;
+        --hour-newProjects-a: 0.2;
+        --hour-critical-rgb: 220, 38, 38;
+        --hour-critical-a: 0.2;
+        --hour-undefined-rgb: 154, 160, 166;
+        --hour-undefined-a: 0.2;
       }
       *,
       *::before,
@@ -327,20 +347,39 @@
         word-break: break-word;
       }
       td.hour-type-norm {
-        background: rgba(124, 58, 237, 0.22);
+        background: rgba(var(--hour-norm-rgb), var(--hour-norm-a));
         font-weight: 600;
       }
       td.hour-type-agreed {
-        background: rgba(37, 99, 235, 0.2);
+        background: rgba(var(--hour-agreed-rgb), var(--hour-agreed-a));
         font-weight: 600;
       }
       td.hour-type-newProjects {
-        background: rgba(22, 163, 74, 0.2);
+        background: rgba(var(--hour-newProjects-rgb), var(--hour-newProjects-a));
         font-weight: 600;
       }
       td.hour-type-critical {
-        background: rgba(220, 38, 38, 0.2);
+        background: rgba(var(--hour-critical-rgb), var(--hour-critical-a));
         font-weight: 600;
+      }
+      td.hour-type-undefined {
+        background: rgba(var(--hour-undefined-rgb), var(--hour-undefined-a));
+        font-weight: 600;
+      }
+      .hour-swatch-norm {
+        background: rgba(var(--hour-norm-rgb), var(--hour-norm-a));
+      }
+      .hour-swatch-agreed {
+        background: rgba(var(--hour-agreed-rgb), var(--hour-agreed-a));
+      }
+      .hour-swatch-newProjects {
+        background: rgba(var(--hour-newProjects-rgb), var(--hour-newProjects-a));
+      }
+      .hour-swatch-critical {
+        background: rgba(var(--hour-critical-rgb), var(--hour-critical-a));
+      }
+      .hour-swatch-undefined {
+        background: rgba(var(--hour-undefined-rgb), var(--hour-undefined-a));
       }
       .client-filter-combo {
         position: relative;
@@ -497,11 +536,11 @@
             <div class="team-chart-block">
               <h4>Часы по клиентам (слева — больше часов, столбец по типам списания)</h4>
               <div class="hour-type-stack-legend" aria-hidden="true">
-                <span><i style="background:#7c3aed"></i> Нормо-часы</span>
-                <span><i style="background:#2563eb"></i> Согласовано Сашей</span>
-                <span><i style="background:#16a34a"></i> Новые проекты</span>
-                <span><i style="background:#dc2626"></i> Критический инцидент</span>
-                <span><i style="background:#9aa0a6"></i> Неопределённые</span>
+                <span><i class="hour-swatch-norm"></i> Нормо-часы</span>
+                <span><i class="hour-swatch-agreed"></i> Согласовано Сашей</span>
+                <span><i class="hour-swatch-newProjects"></i> Новые проекты</span>
+                <span><i class="hour-swatch-critical"></i> Критический инцидент</span>
+                <span><i class="hour-swatch-undefined"></i> Неопределённые</span>
               </div>
               <div class="team-bar-chart-scroll">
                 <canvas id="teamBarChartCanvas" width="720" height="320" aria-label="Столбчатая диаграмма по клиентам"></canvas>
@@ -1036,6 +1075,7 @@
         if (kind === "agreed") return "hour-type-agreed";
         if (kind === "newProjects") return "hour-type-newProjects";
         if (kind === "critical") return "hour-type-critical";
+        if (kind === "undefined") return "hour-type-undefined";
         return "";
       }
 
@@ -1504,14 +1544,68 @@
         return `${s.slice(0, maxLen - 1)}…`;
       }
 
-      const HOUR_TYPE_PIE_COLORS = {
-        norm: "#7c3aed",
-        agreed: "#2563eb",
-        newProjects: "#16a34a",
-        critical: "#dc2626",
-        undefined: "#9aa0a6",
-      };
       const HOUR_TYPE_STACK_ORDER = ["norm", "agreed", "newProjects", "critical", "undefined"];
+      const HOUR_TYPE_COLOR_KEYS = {
+        norm: { rgbVar: "--hour-norm-rgb", alphaVar: "--hour-norm-a" },
+        agreed: { rgbVar: "--hour-agreed-rgb", alphaVar: "--hour-agreed-a" },
+        newProjects: { rgbVar: "--hour-newProjects-rgb", alphaVar: "--hour-newProjects-a" },
+        critical: { rgbVar: "--hour-critical-rgb", alphaVar: "--hour-critical-a" },
+        undefined: { rgbVar: "--hour-undefined-rgb", alphaVar: "--hour-undefined-a" },
+      };
+
+      function parseCssHexColor(hex) {
+        const value = String(hex || "").trim();
+        if (!value.startsWith("#")) return [255, 255, 255];
+        const raw = value.slice(1);
+        const full =
+          raw.length === 3
+            ? raw
+                .split("")
+                .map((ch) => ch + ch)
+                .join("")
+            : raw.padEnd(6, "0").slice(0, 6);
+        return [
+          Number.parseInt(full.slice(0, 2), 16),
+          Number.parseInt(full.slice(2, 4), 16),
+          Number.parseInt(full.slice(4, 6), 16),
+        ];
+      }
+
+      function getSurfaceRgbArray() {
+        const surface = getComputedStyle(document.documentElement).getPropertyValue("--surface").trim();
+        return parseCssHexColor(surface);
+      }
+
+      function blendRgbOnSurface(overlayRgb, alpha) {
+        const base = getSurfaceRgbArray();
+        return [
+          Math.round(base[0] * (1 - alpha) + overlayRgb[0] * alpha),
+          Math.round(base[1] * (1 - alpha) + overlayRgb[1] * alpha),
+          Math.round(base[2] * (1 - alpha) + overlayRgb[2] * alpha),
+        ];
+      }
+
+      /** Цвет сегмента диаграммы — визуально как фон ячейки в детализации (rgba на --surface). */
+      function getHourTypeChartColor(kind) {
+        const cfg = HOUR_TYPE_COLOR_KEYS[kind];
+        if (!cfg) return "rgb(154, 160, 166)";
+        const rootStyle = getComputedStyle(document.documentElement);
+        const rgb = rootStyle
+          .getPropertyValue(cfg.rgbVar)
+          .trim()
+          .split(",")
+          .map((part) => Number(part.trim()));
+        const alpha = Number.parseFloat(rootStyle.getPropertyValue(cfg.alphaVar));
+        if (rgb.length < 3 || !Number.isFinite(alpha)) return "rgb(154, 160, 166)";
+        const [r, g, b] = blendRgbOnSurface(rgb, alpha);
+        return `rgb(${r}, ${g}, ${b})`;
+      }
+
+      function refreshChartsAfterThemeChange() {
+        if (latestByClient.size === 0) return;
+        renderPieChart(latestByClient, latestTotalMinutes);
+        renderTeamCharts(latestByClient);
+      }
 
       function sumMinutesInClientMap(byClient) {
         let total = 0;
@@ -1537,7 +1631,7 @@
               label: item.label,
               minutes,
               pct: totalMinutes > 0 ? (minutes / totalMinutes) * 100 : 0,
-              color: HOUR_TYPE_PIE_COLORS[item.key],
+              color: getHourTypeChartColor(item.key),
             };
           })
           .filter((slice) => slice.minutes > 0);
@@ -1665,7 +1759,7 @@
             const segHours = minutes / 60;
             const segHeight = (segHours / maxHours) * plotHeight;
             segmentBottom -= segHeight;
-            ctx.fillStyle = HOUR_TYPE_PIE_COLORS[key];
+            ctx.fillStyle = getHourTypeChartColor(key);
             ctx.fillRect(x, segmentBottom, barWidth, segHeight);
           }
 
@@ -2024,6 +2118,7 @@
         } catch {
           /* ignore */
         }
+        refreshChartsAfterThemeChange();
       }
 
       function restoreTheme() {
