@@ -6,8 +6,26 @@
     <title>Анализ трека Kaiten по клиентам</title>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
-      :root {
-        color-scheme: light dark;
+      :root,
+      [data-theme="light"] {
+        color-scheme: light;
+        --bg: #f0f2f5;
+        --surface: #ffffff;
+        --text: #1a1a1a;
+        --border: #b8bcc4;
+        --muted-bg: #e8eaed;
+        --link: #1a5fb4;
+        --accent: #1a5fb4;
+      }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #1c1e22;
+        --surface: #2b2f36;
+        --text: #e8eaed;
+        --border: #4a5058;
+        --muted-bg: #383d45;
+        --link: #6cb6ff;
+        --accent: #6cb6ff;
       }
       *,
       *::before,
@@ -22,6 +40,19 @@
       body {
         font-family: Arial, sans-serif;
         line-height: 1.4;
+        background: var(--bg);
+        color: var(--text);
+      }
+      .top-bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 8px;
+      }
+      .top-bar h1 {
+        margin: 0;
       }
       .container {
         width: 100%;
@@ -33,10 +64,22 @@
         margin-top: 0;
       }
       .panel {
-        border: 1px solid #7774;
+        background: var(--surface);
+        border: 1px solid var(--border);
         border-radius: 10px;
         padding: 14px;
         margin-bottom: 16px;
+      }
+      .panel-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+      .panel-head h3 {
+        margin: 0;
       }
       .grid {
         display: grid;
@@ -57,10 +100,21 @@
         font: inherit;
         padding: 8px 10px;
         border-radius: 8px;
-        border: 1px solid #7776;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--text);
       }
       button {
         cursor: pointer;
+        background: var(--surface);
+        color: var(--text);
+        border: 1px solid var(--border);
+      }
+      button.secondary {
+        font-size: 0.9em;
+      }
+      a {
+        color: var(--link);
       }
       .actions {
         display: flex;
@@ -76,7 +130,7 @@
       }
       th,
       td {
-        border: 1px solid #7774;
+        border: 1px solid var(--border);
         padding: 6px 8px;
         text-align: left;
         vertical-align: top;
@@ -92,7 +146,8 @@
         margin-bottom: 10px;
       }
       .metric {
-        border: 1px solid #7774;
+        border: 1px solid var(--border);
+        background: var(--surface);
         border-radius: 10px;
         padding: 10px;
       }
@@ -108,7 +163,8 @@
       .note {
         margin-top: 8px;
         padding: 8px 10px;
-        border: 1px solid #7774;
+        border: 1px solid var(--border);
+        background: var(--muted-bg);
         border-radius: 8px;
         font-size: 0.92em;
       }
@@ -136,7 +192,7 @@
       }
       .clients-table th,
       .clients-table td {
-        border: 1px solid #7774;
+        border: 1px solid var(--border);
         padding: 8px 6px;
         text-align: left;
         vertical-align: top;
@@ -147,7 +203,7 @@
         font-weight: 700;
         font-size: 0.82em;
         line-height: 1.25;
-        background: color-mix(in srgb, Canvas 92%, CanvasText 8%);
+        background: var(--muted-bg);
       }
       .clients-table col.col-client {
         width: 22%;
@@ -164,7 +220,41 @@
         border-radius: 999px;
         padding: 3px 8px;
         font-weight: 700;
-        border: 1px solid #7774;
+        border: 1px solid var(--border);
+      }
+      .chart-panel summary {
+        cursor: pointer;
+        font-weight: 700;
+        padding: 4px 0;
+      }
+      .chart-wrap {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 20px;
+        margin-top: 12px;
+      }
+      #pieChartCanvas {
+        max-width: 100%;
+      }
+      .chart-legend {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        font-size: 0.9em;
+        max-width: 420px;
+      }
+      .chart-legend li {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      .chart-legend .swatch {
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+        flex-shrink: 0;
       }
       @media (max-width: 720px) {
         .grid {
@@ -182,9 +272,12 @@
       }
     </style>
   </head>
-  <body>
+  <body data-theme="light">
     <div class="container">
-      <h1>Анализ трека Kaiten по клиентам</h1>
+      <div class="top-bar">
+        <h1>Анализ трека Kaiten по клиентам</h1>
+        <button id="themeToggle" type="button" class="secondary">Тёмная тема</button>
+      </div>
 
       <div class="panel">
         <div class="grid">
@@ -247,7 +340,20 @@
       </div>
 
       <div class="panel">
-        <h3>По клиентам</h3>
+        <details class="chart-panel" id="pieChartPanel">
+          <summary>Распределение по % минут (диаграмма)</summary>
+          <div class="chart-wrap">
+            <canvas id="pieChartCanvas" width="340" height="340" aria-label="Круговая диаграмма"></canvas>
+            <ul class="chart-legend" id="pieChartLegend"></ul>
+          </div>
+        </details>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>По клиентам</h3>
+          <button id="downloadClientsBtn" type="button" class="secondary" disabled>Скачать xlsx</button>
+        </div>
         <label class="clients-hide-internal">
           <input id="hideInternalClients" type="checkbox" checked />
           <span>Скрыть: ЛИЧНАЯ КАРТА, НЕПРОЕКТНОЕ РАЗВИТИЕ, ПРОДУКТ</span>
@@ -265,7 +371,10 @@
       </div>
 
       <div class="panel">
-        <h3>Детализация</h3>
+        <div class="panel-head">
+          <h3>Детализация</h3>
+          <button id="downloadDetailsBtn" type="button" class="secondary" disabled>Скачать xlsx</button>
+        </div>
         <div style="margin-bottom: 10px;">
           <label class="field" style="max-width: 360px;">
             <span>Фильтр по клиенту</span>
@@ -316,6 +425,11 @@
       const clientsTableBodyEl = document.getElementById("clientsTableBody");
       const teamFilterWrapEl = document.getElementById("teamFilterWrap");
       const teamFilterEl = document.getElementById("teamFilter");
+      const themeToggleEl = document.getElementById("themeToggle");
+      const downloadClientsBtn = document.getElementById("downloadClientsBtn");
+      const downloadDetailsBtn = document.getElementById("downloadDetailsBtn");
+      const pieChartCanvas = document.getElementById("pieChartCanvas");
+      const pieChartLegendEl = document.getElementById("pieChartLegend");
       const rowsEl = document.getElementById("rows");
 
       const formatLocalDate = (d) => {
@@ -365,6 +479,8 @@
       const CONFIG_STORAGE_KEY = "kaiten-track-client-config-v1";
       const TEAM_FILTER_STORAGE_KEY = "kaiten-track-team-filter-v1";
       const TEAM_UNSPECIFIED_LABEL = "Команда не указана";
+      const TEAM_UNDEFINED_LABEL = "Команда неопределенна";
+      const THEME_STORAGE_KEY = "kaiten-track-theme-v1";
 
       /** @type {Map<string, { client: string, normHours: number, team: string }>} */
       let clientConfigByKey = new Map();
@@ -752,7 +868,7 @@
         { label: "% минут", title: "% от суммы минут", num: true },
         { label: "Факт, ч", title: "Факт, ч", num: true },
         { label: "Нормо-часы, ч", title: "Нормо-часы, ч", num: true },
-        { label: "% норм.", title: "% использованного норматива", num: true },
+        { label: "% от нормо-часов", title: "% от нормо-часов (норматив из конфига)", num: true },
         { label: "Согл. Сашей, ч", title: "Согласовано Сашей, ч", num: true },
         { label: "Нов. проекты, ч", title: "Новые проекты, ч", num: true },
         { label: "Крит. инц., ч", title: "Критические инциденты, ч", num: true },
@@ -773,8 +889,7 @@
         const rows = [];
         const sorted = Array.from(byClient.entries()).sort((a, b) => b[1].total - a[1].total);
         for (const [client, agg] of sorted) {
-          if (isClientRowHiddenInSummary(client)) continue;
-          if (!isClientVisibleByTeamFilter(client)) continue;
+          if (!isClientVisibleInClientsTable(client)) continue;
 
           const minutes = agg.total;
           const normHoursFact = agg.norm / 60;
@@ -784,10 +899,14 @@
           const percentText = typeof percentValue === "number" ? `${percentValue.toFixed(2)}%` : "-";
           const percentStyle = getPercentStyle(percentValue);
           const percentOfTotal = totalMinutes > 0 ? `${((minutes / totalMinutes) * 100).toFixed(2)}%` : "-";
+          const normTooltip =
+            typeof configNorm === "number"
+              ? `Норматив из конфига: ${configNorm.toFixed(2)} ч`
+              : "";
           const percentCell =
             percentText === "-"
               ? "-"
-              : `<span class="percent-badge" style="${escapeHtml(percentStyle)}">${escapeHtml(percentText)}</span>`;
+              : `<span class="percent-badge" style="${escapeHtml(percentStyle)}" title="${escapeHtml(normTooltip)}">${escapeHtml(percentText)}</span>`;
 
           rows.push(`<tr>
             <td>${escapeHtml(client)}</td>
@@ -822,13 +941,7 @@
       }
 
       function renderDetailsWithFilter(baseUrl) {
-        const selectedClient = clientFilterEl.value;
-        let rows = latestGroupedRows;
-        if (selectedClient) {
-          rows = rows.filter((row) => (row.client || "-") === selectedClient);
-        }
-        rows = rows.filter((row) => isClientVisibleByTeamFilter(row.client || "-"));
-        renderRows(rows, baseUrl);
+        renderRows(getFilteredDetailsRows(), baseUrl);
       }
 
       function normalizeClientName(value) {
@@ -849,10 +962,11 @@
         return cfg ? cfg.normHours : undefined;
       }
 
-      function getClientTeamForFilter(clientName) {
+      function getClientTeamFilterKey(clientName) {
         const cfg = getClientConfig(clientName);
-        if (!cfg) return null;
-        return normalizeTeamLabel(cfg.team);
+        if (!cfg) return TEAM_UNDEFINED_LABEL;
+        if (!String(cfg.team || "").trim()) return TEAM_UNDEFINED_LABEL;
+        return String(cfg.team).trim();
       }
 
       function isConfigLoaded() {
@@ -863,9 +977,22 @@
         if (!isConfigLoaded()) return true;
         const selectedTeam = teamFilterEl?.value ?? "";
         if (!selectedTeam) return true;
-        const clientTeam = getClientTeamForFilter(clientName);
-        if (clientTeam == null) return false;
-        return clientTeam === selectedTeam;
+        return getClientTeamFilterKey(clientName) === selectedTeam;
+      }
+
+      function isClientVisibleInClientsTable(clientName) {
+        if (isClientRowHiddenInSummary(clientName)) return false;
+        if (!isClientVisibleByTeamFilter(clientName)) return false;
+        return true;
+      }
+
+      function getFilteredDetailsRows() {
+        const selectedClient = clientFilterEl.value;
+        let rows = latestGroupedRows;
+        if (selectedClient) {
+          rows = rows.filter((row) => (row.client || "-") === selectedClient);
+        }
+        return rows.filter((row) => isClientVisibleByTeamFilter(row.client || "-"));
       }
 
       function updateConfigStatusText() {
@@ -983,13 +1110,10 @@
         const previous = teamFilterEl.value;
         const teams = new Set();
         for (const [, cfg] of clientConfigByKey) {
-          teams.add(normalizeTeamLabel(cfg.team));
+          const team = String(cfg.team || "").trim();
+          if (team) teams.add(team);
         }
-        const sorted = Array.from(teams).sort((a, b) => {
-          if (a === TEAM_UNSPECIFIED_LABEL) return 1;
-          if (b === TEAM_UNSPECIFIED_LABEL) return -1;
-          return a.localeCompare(b, "ru");
-        });
+        const sorted = Array.from(teams).sort((a, b) => a.localeCompare(b, "ru"));
 
         teamFilterEl.innerHTML = `<option value="">Все команды</option>`;
         for (const team of sorted) {
@@ -998,8 +1122,13 @@
           option.textContent = team;
           teamFilterEl.appendChild(option);
         }
+        const undefinedOpt = document.createElement("option");
+        undefinedOpt.value = TEAM_UNDEFINED_LABEL;
+        undefinedOpt.textContent = TEAM_UNDEFINED_LABEL;
+        teamFilterEl.appendChild(undefinedOpt);
 
-        if (previous && (previous === "" || sorted.includes(previous))) {
+        const validValues = ["", TEAM_UNDEFINED_LABEL, ...sorted];
+        if (previous && validValues.includes(previous)) {
           teamFilterEl.value = previous;
         } else {
           teamFilterEl.value = "";
@@ -1010,8 +1139,153 @@
       function refreshViewsAfterFilterChange() {
         if (latestByClient.size > 0) {
           renderClientsSummary(latestByClient, latestTotalMinutes);
+          renderPieChart(latestByClient, latestTotalMinutes);
         }
         renderDetailsWithFilter(KAITEN_BASE_URL);
+        updateExportButtonsState();
+      }
+
+      function updateExportButtonsState() {
+        const hasData = latestByClient.size > 0;
+        if (downloadClientsBtn) downloadClientsBtn.disabled = !hasData;
+        if (downloadDetailsBtn) downloadDetailsBtn.disabled = !hasData;
+      }
+
+      const PIE_CHART_COLORS = [
+        "#4e79a7",
+        "#f28e2b",
+        "#e15759",
+        "#76b7b2",
+        "#59a14f",
+        "#edc948",
+        "#b07aa1",
+        "#ff9da7",
+        "#9c755f",
+        "#bab0ac",
+      ];
+
+      function renderPieChart(byClient, totalMinutes) {
+        if (!pieChartCanvas || !pieChartLegendEl) return;
+        const slices = [];
+        const sorted = Array.from(byClient.entries()).sort((a, b) => b[1].total - a[1].total);
+        for (const [client, agg] of sorted) {
+          if (!isClientVisibleInClientsTable(client)) continue;
+          const minutes = agg.total;
+          if (minutes <= 0) continue;
+          const pct = totalMinutes > 0 ? (minutes / totalMinutes) * 100 : 0;
+          slices.push({ client, minutes, pct });
+        }
+
+        const ctx = pieChartCanvas.getContext("2d");
+        if (!ctx) return;
+        const w = pieChartCanvas.width;
+        const h = pieChartCanvas.height;
+        ctx.clearRect(0, 0, w, h);
+
+        if (slices.length === 0) {
+          pieChartLegendEl.innerHTML = "<li>Нет данных для диаграммы</li>";
+          return;
+        }
+
+        const cx = w / 2;
+        const cy = h / 2;
+        const radius = Math.min(w, h) * 0.38;
+        let start = -Math.PI / 2;
+        slices.forEach((slice, i) => {
+          const angle = (slice.pct / 100) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.arc(cx, cy, radius, start, start + angle);
+          ctx.closePath();
+          ctx.fillStyle = PIE_CHART_COLORS[i % PIE_CHART_COLORS.length];
+          ctx.fill();
+          start += angle;
+        });
+
+        pieChartLegendEl.innerHTML = slices
+          .map((slice, i) => {
+            const color = PIE_CHART_COLORS[i % PIE_CHART_COLORS.length];
+            return `<li><span class="swatch" style="background:${color}"></span><span>${escapeHtml(slice.client)} — ${slice.pct.toFixed(2)}%</span></li>`;
+          })
+          .join("");
+      }
+
+      function buildClientsExportRows(byClient, totalMinutes) {
+        const header = CLIENT_TABLE_COLUMNS.map((c) => c.title);
+        const dataRows = [];
+        const sorted = Array.from(byClient.entries()).sort((a, b) => b[1].total - a[1].total);
+        for (const [client, agg] of sorted) {
+          if (!isClientVisibleInClientsTable(client)) continue;
+          const minutes = agg.total;
+          const normHoursFact = agg.norm / 60;
+          const configNorm = getClientNormHours(client);
+          const percentValue =
+            typeof configNorm === "number" && configNorm > 0 ? (normHoursFact / configNorm) * 100 : null;
+          const percentText = typeof percentValue === "number" ? `${percentValue.toFixed(2)}%` : "-";
+          const percentOfTotal = totalMinutes > 0 ? `${((minutes / totalMinutes) * 100).toFixed(2)}%` : "-";
+          dataRows.push([
+            client,
+            percentOfTotal,
+            formatHoursFromMinutes(agg.total),
+            formatHoursFromMinutes(agg.norm),
+            percentText,
+            formatHoursFromMinutes(agg.agreed),
+            formatHoursFromMinutes(agg.newProjects),
+            formatHoursFromMinutes(agg.critical),
+            formatHoursFromMinutes(agg.undefined),
+          ]);
+        }
+        return [header, ...dataRows];
+      }
+
+      function buildDetailsExportRows() {
+        const header = [
+          "Номер карты",
+          "Название карты",
+          "Клиент",
+          "Тип списания часов",
+          "Минут",
+          "Часов",
+        ];
+        const rows = getFilteredDetailsRows().map((row) => [
+          row.cardId == null ? "" : String(row.cardId),
+          row.title || "",
+          row.client || "-",
+          row.hourType || "-",
+          row.minutes ?? 0,
+          formatHoursFromMinutes(row.minutes ?? 0),
+        ]);
+        return [header, ...rows];
+      }
+
+      function downloadWorkbook(sheetName, rows, fileName) {
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
+        XLSX.writeFile(wb, fileName);
+      }
+
+      function applyTheme(theme) {
+        const next = theme === "dark" ? "dark" : "light";
+        document.body.setAttribute("data-theme", next);
+        if (themeToggleEl) {
+          themeToggleEl.textContent = next === "dark" ? "Светлая тема" : "Тёмная тема";
+        }
+        try {
+          localStorage.setItem(THEME_STORAGE_KEY, next);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      function restoreTheme() {
+        try {
+          const saved = localStorage.getItem(THEME_STORAGE_KEY);
+          if (saved === "dark" || saved === "light") applyTheme(saved);
+          else applyTheme("light");
+        } catch {
+          applyTheme("light");
+        }
       }
 
       const INTERNAL_CLIENT_KEYS = new Set(
@@ -1159,6 +1433,8 @@
           updateClientFilterOptions(groupedRows);
           renderDetailsWithFilter(baseUrl);
           renderClientsSummary(byClient, totalMinutes);
+          renderPieChart(byClient, totalMinutes);
+          updateExportButtonsState();
         } catch (error) {
           const part =
             error?.chunkIndex != null
@@ -1192,6 +1468,12 @@
         latestByClient = new Map();
         latestTotalMinutes = 0;
         rowsEl.innerHTML = "";
+        pieChartLegendEl.innerHTML = "";
+        if (pieChartCanvas) {
+          const ctx = pieChartCanvas.getContext("2d");
+          ctx?.clearRect(0, 0, pieChartCanvas.width, pieChartCanvas.height);
+        }
+        updateExportButtonsState();
       }
 
       renderClientsTableHead();
@@ -1199,12 +1481,26 @@
       loadBtn.addEventListener("click", loadData);
       clearBtn.addEventListener("click", clearAll);
       clientFilterEl.addEventListener("change", () => {
-        renderDetailsWithFilter(KAITEN_BASE_URL);
+        refreshViewsAfterFilterChange();
       });
       hideInternalClientsEl.addEventListener("change", () => {
-        if (latestByClient.size > 0) {
-          renderClientsSummary(latestByClient, latestTotalMinutes);
-        }
+        refreshViewsAfterFilterChange();
+      });
+      themeToggleEl.addEventListener("click", () => {
+        const current = document.body.getAttribute("data-theme") || "light";
+        applyTheme(current === "dark" ? "light" : "dark");
+      });
+      downloadClientsBtn.addEventListener("click", () => {
+        if (latestByClient.size === 0) return;
+        const rows = buildClientsExportRows(latestByClient, latestTotalMinutes);
+        const stamp = formatLocalDate(new Date());
+        downloadWorkbook("По клиентам", rows, `po-klientam-${stamp}.xlsx`);
+      });
+      downloadDetailsBtn.addEventListener("click", () => {
+        if (latestGroupedRows.length === 0) return;
+        const rows = buildDetailsExportRows();
+        const stamp = formatLocalDate(new Date());
+        downloadWorkbook("Детализация", rows, `detalizaciya-${stamp}.xlsx`);
       });
       teamFilterEl.addEventListener("change", () => {
         saveTeamFilterToStorage();
@@ -1221,10 +1517,12 @@
         }
       });
 
+      restoreTheme();
       restoreConfigFromStorage();
       restoreTeamFilterFromStorage();
       updateTeamFilterOptions();
       updateConfigStatusText();
+      updateExportButtonsState();
     </script>
   </body>
 </html>
