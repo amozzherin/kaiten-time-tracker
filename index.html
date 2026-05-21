@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Анализ трека Kaiten по клиентам</title>
-    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js"></script>
     <style>
       :root,
       [data-theme="light"] {
@@ -229,12 +229,59 @@
       }
       .chart-wrap {
         display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
         justify-content: center;
+        gap: 20px 32px;
         margin-top: 12px;
       }
       #pieChartCanvas {
         max-width: 100%;
         display: block;
+        flex-shrink: 0;
+      }
+      .pie-legend {
+        list-style: none;
+        margin: 0;
+        padding: 8px 0 0;
+        max-width: 520px;
+        font-size: 0.9em;
+        line-height: 1.55;
+      }
+      .pie-legend li {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        margin-bottom: 4px;
+      }
+      .pie-legend .swatch {
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+        flex-shrink: 0;
+        margin-top: 3px;
+        border: 1px solid rgba(0, 0, 0, 0.12);
+      }
+      .pie-legend .legend-text {
+        flex: 1;
+        min-width: 0;
+        word-break: break-word;
+      }
+      td.hour-type-norm {
+        background: rgba(124, 58, 237, 0.22);
+        font-weight: 600;
+      }
+      td.hour-type-agreed {
+        background: rgba(37, 99, 235, 0.2);
+        font-weight: 600;
+      }
+      td.hour-type-newProjects {
+        background: rgba(22, 163, 74, 0.2);
+        font-weight: 600;
+      }
+      td.hour-type-critical {
+        background: rgba(220, 38, 38, 0.2);
+        font-weight: 600;
       }
       @media (max-width: 720px) {
         .grid {
@@ -323,7 +370,8 @@
         <details class="chart-panel" id="pieChartPanel">
           <summary>Распределение по % минут (диаграмма)</summary>
           <div class="chart-wrap">
-            <canvas id="pieChartCanvas" width="480" height="480" aria-label="Круговая диаграмма"></canvas>
+            <canvas id="pieChartCanvas" width="360" height="360" aria-label="Круговая диаграмма"></canvas>
+            <ol id="pieChartLegend" class="pie-legend" aria-label="ТОП-10 клиентов"></ol>
           </div>
         </details>
       </div>
@@ -408,6 +456,7 @@
       const downloadClientsBtn = document.getElementById("downloadClientsBtn");
       const downloadDetailsBtn = document.getElementById("downloadDetailsBtn");
       const pieChartCanvas = document.getElementById("pieChartCanvas");
+      const pieChartLegendEl = document.getElementById("pieChartLegend");
       const rowsEl = document.getElementById("rows");
 
       const formatLocalDate = (d) => {
@@ -821,6 +870,15 @@
         return rows;
       }
 
+      function getHourTypeRowClass(hourTypeLabel) {
+        const kind = classifyHourType(hourTypeLabel);
+        if (kind === "norm") return "hour-type-norm";
+        if (kind === "agreed") return "hour-type-agreed";
+        if (kind === "newProjects") return "hour-type-newProjects";
+        if (kind === "critical") return "hour-type-critical";
+        return "";
+      }
+
       function renderRows(rows, baseUrl) {
         rowsEl.innerHTML = "";
         for (const row of rows) {
@@ -830,13 +888,15 @@
           const title = row.title || "-";
           const client = row.client || "-";
           const hourType = row.hourType || "-";
+          const hourTypeClass = getHourTypeRowClass(hourType);
           const m = row.minutes ?? 0;
           const h = (m / 60).toFixed(2);
+          const hourTypeTdClass = hourTypeClass ? ` class="${hourTypeClass}"` : "";
           tr.innerHTML = `
             <td>${row.cardId == null ? "-" : `<a href="${escapeHtml(cardUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(cardNumber)}</a>`}</td>
             <td>${escapeHtml(title)}</td>
             <td>${escapeHtml(client)}</td>
-            <td>${escapeHtml(hourType)}</td>
+            <td${hourTypeTdClass}>${escapeHtml(hourType)}</td>
             <td>${m}</td>
             <td>${h}</td>
           `;
@@ -1171,38 +1231,27 @@
         return slices;
       }
 
-      function truncatePieLabel(text, maxLen) {
-        const s = String(text || "");
-        if (s.length <= maxLen) return s;
-        return `${s.slice(0, maxLen - 1)}…`;
+      function getPieSliceColor(slice, index) {
+        return slice.label === PIE_OTHER_LABEL
+          ? PIE_OTHER_COLOR
+          : PIE_CHART_COLORS[index % PIE_CHART_COLORS.length];
       }
 
-      function drawPieSliceLabel(ctx, cx, cy, radius, start, end, pct, label) {
-        const span = end - start;
-        if (span < 0.06) return;
-
-        const mid = start + span / 2;
-        const x = cx + Math.cos(mid) * radius * 0.58;
-        const y = cy + Math.sin(mid) * radius * 0.58;
-        const pctText = `${pct.toFixed(1)}%`;
-        const nameText = truncatePieLabel(label, span < 0.12 ? 8 : span < 0.2 ? 14 : 22);
-        const fontSize = Math.max(9, Math.min(13, 8 + span * 28));
-
-        ctx.save();
-        ctx.font = `bold ${fontSize}px Arial, sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        const lines = [pctText, nameText];
-        const lineHeight = fontSize + 3;
-        lines.forEach((line, i) => {
-          const ly = y + (i - (lines.length - 1) / 2) * lineHeight;
-          ctx.lineWidth = 3;
-          ctx.strokeStyle = "rgba(0,0,0,0.55)";
-          ctx.strokeText(line, x, ly);
-          ctx.fillStyle = "#ffffff";
-          ctx.fillText(line, x, ly);
-        });
-        ctx.restore();
+      function renderPieChartLegend(slices) {
+        if (!pieChartLegendEl) return;
+        if (!slices.length) {
+          pieChartLegendEl.innerHTML = "";
+          return;
+        }
+        pieChartLegendEl.innerHTML = slices
+          .map((slice, i) => {
+            const color = getPieSliceColor(slice, i);
+            const pctText = `${slice.pct.toFixed(1)} %`;
+            const factText = formatHoursFromMinutes(slice.minutes);
+            const line = `${i + 1}. ${slice.label} - ${pctText} - ${factText} ч`;
+            return `<li><span class="swatch" style="background:${escapeHtml(color)}"></span><span class="legend-text">${escapeHtml(line)}</span></li>`;
+          })
+          .join("");
       }
 
       function renderPieChart(byClient, totalMinutes) {
@@ -1216,6 +1265,7 @@
 
         const slices = buildPieChartSlices(byClient, totalMinutes);
         if (slices.length === 0) {
+          if (pieChartLegendEl) pieChartLegendEl.innerHTML = "";
           ctx.fillStyle = getComputedStyle(document.body).color || "#111";
           ctx.font = "14px Arial";
           ctx.textAlign = "center";
@@ -1224,18 +1274,17 @@
           return;
         }
 
+        renderPieChartLegend(slices);
+
         const cx = w / 2;
         const cy = h / 2;
-        const radius = Math.min(w, h) * 0.4;
+        const radius = Math.min(w, h) * 0.42;
         let start = -Math.PI / 2;
 
         slices.forEach((slice, i) => {
           const angle = (slice.pct / 100) * Math.PI * 2;
           const end = start + angle;
-          const color =
-            slice.label === PIE_OTHER_LABEL
-              ? PIE_OTHER_COLOR
-              : PIE_CHART_COLORS[i % PIE_CHART_COLORS.length];
+          const color = getPieSliceColor(slice, i);
 
           ctx.beginPath();
           ctx.moveTo(cx, cy);
@@ -1247,7 +1296,6 @@
           ctx.lineWidth = 1;
           ctx.stroke();
 
-          drawPieSliceLabel(ctx, cx, cy, radius, start, end, slice.pct, slice.label);
           start = end;
         });
       }
@@ -1256,14 +1304,101 @@
         return /[a-zA-Zа-яА-ЯёЁ]/.test(String(value ?? ""));
       }
 
+      function addSpaceBeforePercent(text) {
+        return String(text).replace(/(\d)\s*%/g, "$1 %");
+      }
+
       function formatCellForXlsxExport(value) {
         if (value == null) return "";
         if (typeof value === "number") {
           return String(value).replace(/\./g, ",");
         }
-        const text = String(value);
+        let text = String(value);
+        if (text.includes("%")) {
+          text = addSpaceBeforePercent(text);
+        }
         if (cellHasLetters(text)) return text;
         return text.replace(/\./g, ",");
+      }
+
+      function percentToExcelFillRgb(percent) {
+        if (typeof percent !== "number") return null;
+        if (percent > 100) return "FFCDD2";
+        const p = Math.max(0, Math.min(100, percent));
+        const from = { r: 34, g: 197, b: 94 };
+        const to = { r: 150, g: 75, b: 0 };
+        const t = p <= 20 ? 0 : (p - 20) / 80;
+        const r = Math.round(from.r + (to.r - from.r) * t);
+        const g = Math.round(from.g + (to.g - from.g) * t);
+        const b = Math.round(from.b + (to.b - from.b) * t);
+        return [r, g, b]
+          .map((x) => x.toString(16).padStart(2, "0"))
+          .join("")
+          .toUpperCase();
+      }
+
+      const HOUR_TYPE_EXCEL_FILLS = {
+        norm: { fill: "DDD6FE", font: "5B21B6" },
+        agreed: { fill: "BFDBFE", font: "1E40AF" },
+        newProjects: { fill: "BBF7D0", font: "166534" },
+        critical: { fill: "FECACA", font: "991B1B" },
+      };
+
+      function hourTypeToExcelStyle(hourTypeLabel) {
+        const kind = classifyHourType(hourTypeLabel);
+        const palette = HOUR_TYPE_EXCEL_FILLS[kind];
+        if (!palette) return null;
+        return {
+          fill: { patternType: "solid", fgColor: { rgb: palette.fill } },
+          font: { color: { rgb: palette.font }, bold: true },
+        };
+      }
+
+      function makeExcelHeaderStyle() {
+        return {
+          fill: { patternType: "solid", fgColor: { rgb: "E8EAED" } },
+          font: { bold: true },
+        };
+      }
+
+      function applyWorksheetCellStyles(ws, formattedRows, getCellStyle) {
+        if (!getCellStyle || !ws["!ref"]) return;
+        const range = XLSX.utils.decode_range(ws["!ref"]);
+        for (let r = range.s.r; r <= range.e.r; r += 1) {
+          for (let c = range.s.c; c <= range.e.c; c += 1) {
+            const addr = XLSX.utils.encode_cell({ r, c });
+            const cell = ws[addr];
+            if (!cell) continue;
+            const style = getCellStyle(r, c, formattedRows[r]?.[c], formattedRows[r]);
+            if (style) cell.s = style;
+          }
+        }
+      }
+
+      function getClientsExportCellStyle(rowIndex, colIndex, _cellValue, row) {
+        if (rowIndex === 0) return makeExcelHeaderStyle();
+        if (colIndex === 4 && row) {
+          const client = row[0];
+          const agg = latestByClient.get(client);
+          if (!agg) return null;
+          const configNorm = getClientNormHours(client);
+          const normHoursFact = agg.norm / 60;
+          const percentValue =
+            typeof configNorm === "number" && configNorm > 0 ? (normHoursFact / configNorm) * 100 : null;
+          const rgb = percentToExcelFillRgb(percentValue);
+          if (rgb) {
+            return {
+              fill: { patternType: "solid", fgColor: { rgb } },
+            };
+          }
+        }
+        return null;
+      }
+
+      function getDetailsExportCellStyle(rowIndex, colIndex, _cellValue, row) {
+        if (rowIndex === 0) return makeExcelHeaderStyle();
+        if (colIndex === 3 && row) return hourTypeToExcelStyle(row[3]);
+        return null;
       }
 
       function formatRowsForXlsxExport(rows) {
@@ -1342,9 +1477,10 @@
         return [header, ...rows];
       }
 
-      function downloadWorkbook(sheetName, rows, fileName) {
+      function downloadWorkbook(sheetName, rows, fileName, getCellStyle) {
         const formatted = formatRowsForXlsxExport(rows);
         const ws = XLSX.utils.aoa_to_sheet(formatted);
+        applyWorksheetCellStyles(ws, formatted, getCellStyle);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
         XLSX.writeFile(wb, fileName);
@@ -1560,6 +1696,7 @@
           const ctx = pieChartCanvas.getContext("2d");
           ctx?.clearRect(0, 0, pieChartCanvas.width, pieChartCanvas.height);
         }
+        if (pieChartLegendEl) pieChartLegendEl.innerHTML = "";
         updateExportButtonsState();
       }
 
@@ -1585,13 +1722,13 @@
         if (latestByClient.size === 0) return;
         const rows = buildClientsExportRows(latestByClient, latestTotalMinutes);
         const stamp = formatLocalDate(new Date());
-        downloadWorkbook("По клиентам", rows, `po-klientam-${stamp}.xlsx`);
+        downloadWorkbook("По клиентам", rows, `po-klientam-${stamp}.xlsx`, getClientsExportCellStyle);
       });
       downloadDetailsBtn.addEventListener("click", () => {
         if (latestGroupedRows.length === 0) return;
         const rows = buildDetailsExportRows();
         const stamp = formatLocalDate(new Date());
-        downloadWorkbook("Детализация", rows, `detalizaciya-${stamp}.xlsx`);
+        downloadWorkbook("Детализация", rows, `detalizaciya-${stamp}.xlsx`, getDetailsExportCellStyle);
       });
       teamFilterEl.addEventListener("change", () => {
         saveTeamFilterToStorage();
