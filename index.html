@@ -255,7 +255,6 @@
         gap: 20px 32px;
         margin-top: 12px;
       }
-      #pieChartCanvas,
       #teamHourTypePieCanvas,
       #teamClientsPieCanvas {
         max-width: 100%;
@@ -366,20 +365,20 @@
         background: rgba(var(--hour-undefined-rgb), var(--hour-undefined-a));
         font-weight: 600;
       }
-      .hour-swatch-norm {
-        background: rgba(var(--hour-norm-rgb), var(--hour-norm-a));
+      .hour-type-stack-legend .hour-swatch-norm {
+        background: rgb(var(--hour-norm-rgb));
       }
-      .hour-swatch-agreed {
-        background: rgba(var(--hour-agreed-rgb), var(--hour-agreed-a));
+      .hour-type-stack-legend .hour-swatch-agreed {
+        background: rgb(var(--hour-agreed-rgb));
       }
-      .hour-swatch-newProjects {
-        background: rgba(var(--hour-newProjects-rgb), var(--hour-newProjects-a));
+      .hour-type-stack-legend .hour-swatch-newProjects {
+        background: rgb(var(--hour-newProjects-rgb));
       }
-      .hour-swatch-critical {
-        background: rgba(var(--hour-critical-rgb), var(--hour-critical-a));
+      .hour-type-stack-legend .hour-swatch-critical {
+        background: rgb(var(--hour-critical-rgb));
       }
-      .hour-swatch-undefined {
-        background: rgba(var(--hour-undefined-rgb), var(--hour-undefined-a));
+      .hour-type-stack-legend .hour-swatch-undefined {
+        background: rgb(var(--hour-undefined-rgb));
       }
       .client-filter-combo {
         position: relative;
@@ -506,14 +505,7 @@
       </div>
 
       <div class="panel">
-        <details class="chart-panel" id="pieChartPanel">
-          <summary>Распределение % фактического трека (все команды)</summary>
-          <div class="chart-wrap">
-            <canvas id="pieChartCanvas" width="360" height="360" aria-label="Круговая диаграмма"></canvas>
-            <ol id="pieChartLegend" class="pie-legend" aria-label="ТОП-10 клиентов"></ol>
-          </div>
-        </details>
-        <details class="chart-panel" id="teamChartsPanel" style="margin-top: 12px;">
+        <details class="chart-panel" id="teamChartsPanel">
           <summary>Распределение % трека по выбранной команде</summary>
           <p class="chart-team-note" id="teamChartsCaption"></p>
           <div class="team-charts-wrap">
@@ -534,7 +526,7 @@
               </div>
             </div>
             <div class="team-chart-block">
-              <h4>Часы по клиентам (слева — больше часов, столбец по типам списания)</h4>
+              <h4>Столбчатая диаграмма по клиентам и типу списания часов</h4>
               <div class="hour-type-stack-legend" aria-hidden="true">
                 <span><i class="hour-swatch-norm"></i> Нормо-часы</span>
                 <span><i class="hour-swatch-agreed"></i> Согласовано Сашей</span>
@@ -648,8 +640,6 @@
       const themeToggleEl = document.getElementById("themeToggle");
       const downloadClientsBtn = document.getElementById("downloadClientsBtn");
       const downloadDetailsBtn = document.getElementById("downloadDetailsBtn");
-      const pieChartCanvas = document.getElementById("pieChartCanvas");
-      const pieChartLegendEl = document.getElementById("pieChartLegend");
       const teamChartsCaptionEl = document.getElementById("teamChartsCaption");
       const teamClientsPieCanvas = document.getElementById("teamClientsPieCanvas");
       const teamClientsPieLegendEl = document.getElementById("teamClientsPieLegend");
@@ -1553,57 +1543,17 @@
         undefined: { rgbVar: "--hour-undefined-rgb", alphaVar: "--hour-undefined-a" },
       };
 
-      function parseCssHexColor(hex) {
-        const value = String(hex || "").trim();
-        if (!value.startsWith("#")) return [255, 255, 255];
-        const raw = value.slice(1);
-        const full =
-          raw.length === 3
-            ? raw
-                .split("")
-                .map((ch) => ch + ch)
-                .join("")
-            : raw.padEnd(6, "0").slice(0, 6);
-        return [
-          Number.parseInt(full.slice(0, 2), 16),
-          Number.parseInt(full.slice(2, 4), 16),
-          Number.parseInt(full.slice(4, 6), 16),
-        ];
-      }
-
-      function getSurfaceRgbArray() {
-        const surface = getComputedStyle(document.documentElement).getPropertyValue("--surface").trim();
-        return parseCssHexColor(surface);
-      }
-
-      function blendRgbOnSurface(overlayRgb, alpha) {
-        const base = getSurfaceRgbArray();
-        return [
-          Math.round(base[0] * (1 - alpha) + overlayRgb[0] * alpha),
-          Math.round(base[1] * (1 - alpha) + overlayRgb[1] * alpha),
-          Math.round(base[2] * (1 - alpha) + overlayRgb[2] * alpha),
-        ];
-      }
-
-      /** Цвет сегмента диаграммы — визуально как фон ячейки в детализации (rgba на --surface). */
+      /** Яркий цвет сегмента диаграммы — тот же оттенок, что в детализации (--hour-*-rgb). */
       function getHourTypeChartColor(kind) {
         const cfg = HOUR_TYPE_COLOR_KEYS[kind];
         if (!cfg) return "rgb(154, 160, 166)";
-        const rootStyle = getComputedStyle(document.documentElement);
-        const rgb = rootStyle
-          .getPropertyValue(cfg.rgbVar)
-          .trim()
-          .split(",")
-          .map((part) => Number(part.trim()));
-        const alpha = Number.parseFloat(rootStyle.getPropertyValue(cfg.alphaVar));
-        if (rgb.length < 3 || !Number.isFinite(alpha)) return "rgb(154, 160, 166)";
-        const [r, g, b] = blendRgbOnSurface(rgb, alpha);
-        return `rgb(${r}, ${g}, ${b})`;
+        const rgb = getComputedStyle(document.documentElement).getPropertyValue(cfg.rgbVar).trim();
+        if (!rgb) return "rgb(154, 160, 166)";
+        return `rgb(${rgb})`;
       }
 
       function refreshChartsAfterThemeChange() {
         if (latestByClient.size === 0) return;
-        renderPieChart(latestByClient, latestTotalMinutes);
         renderTeamCharts(latestByClient);
       }
 
@@ -1883,12 +1833,6 @@
             return `<li><span class="swatch" style="background:${escapeHtml(color)}"></span><span class="legend-text">${escapeHtml(line)}</span></li>`;
           })
           .join("");
-      }
-
-      function renderPieChart(byClient, totalMinutes) {
-        const slices = buildPieChartSlices(byClient, totalMinutes);
-        renderNumberedPieChartLegend(pieChartLegendEl, slices);
-        renderGenericPieChart(pieChartCanvas, null, slices, (slice, i) => getPieSliceColor(slice, i));
       }
 
       function cellHasLetters(value) {
@@ -2278,7 +2222,6 @@
           updateClientFilterOptions();
           renderDetailsWithFilter(baseUrl);
           renderClientsSummary(byClient, totalMinutes);
-          renderPieChart(byClient, totalMinutes);
           renderTeamCharts(byClient);
           updateExportButtonsState();
         } catch (error) {
@@ -2318,11 +2261,6 @@
         latestByClient = new Map();
         latestTotalMinutes = 0;
         rowsEl.innerHTML = "";
-        if (pieChartCanvas) {
-          const ctx = pieChartCanvas.getContext("2d");
-          ctx?.clearRect(0, 0, pieChartCanvas.width, pieChartCanvas.height);
-        }
-        if (pieChartLegendEl) pieChartLegendEl.innerHTML = "";
         if (teamChartsCaptionEl) teamChartsCaptionEl.textContent = "";
         if (teamClientsPieLegendEl) teamClientsPieLegendEl.innerHTML = "";
         if (teamHourTypePieLegendEl) teamHourTypePieLegendEl.innerHTML = "";
