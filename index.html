@@ -283,6 +283,50 @@
         background: rgba(220, 38, 38, 0.2);
         font-weight: 600;
       }
+      .client-filter-combo {
+        position: relative;
+      }
+      .client-filter-suggestions {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: calc(100% + 4px);
+        z-index: 30;
+        max-height: 240px;
+        overflow-y: auto;
+        margin: 0;
+        padding: 4px 0;
+        list-style: none;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+      }
+      .client-filter-suggestions[hidden] {
+        display: none;
+      }
+      .client-filter-suggestions li button {
+        width: 100%;
+        text-align: left;
+        border: none;
+        border-radius: 0;
+        background: transparent;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+      .client-filter-suggestions li button:hover,
+      .client-filter-suggestions li button:focus {
+        background: var(--muted-bg);
+      }
+      .client-filter-suggestions li button.is-active {
+        font-weight: 700;
+      }
+      .client-filter-empty {
+        padding: 8px 12px;
+        color: var(--text);
+        opacity: 0.65;
+        font-size: 0.9em;
+      }
       @media (max-width: 720px) {
         .grid {
           grid-template-columns: 1fr;
@@ -403,11 +447,17 @@
           <button id="downloadDetailsBtn" type="button" class="secondary" disabled>Скачать xlsx</button>
         </div>
         <div style="margin-bottom: 10px;">
-          <label class="field" style="max-width: 360px;">
+          <label class="field client-filter-field" style="max-width: 420px;">
             <span>Фильтр по клиенту</span>
-            <select id="clientFilter">
-              <option value="">Все клиенты</option>
-            </select>
+            <div class="client-filter-combo">
+              <input
+                id="clientFilterInput"
+                type="search"
+                placeholder="Все клиенты — введите для поиска"
+                autocomplete="off"
+              />
+              <ul id="clientFilterSuggestions" class="client-filter-suggestions" hidden></ul>
+            </div>
           </label>
         </div>
         <div style="overflow-x: auto">
@@ -439,7 +489,8 @@
       const fromDateInput = document.getElementById("fromDate");
       const toDateInput = document.getElementById("toDate");
       const configFileInput = document.getElementById("configFile");
-      const clientFilterEl = document.getElementById("clientFilter");
+      const clientFilterInputEl = document.getElementById("clientFilterInput");
+      const clientFilterSuggestionsEl = document.getElementById("clientFilterSuggestions");
       const hideInternalClientsEl = document.getElementById("hideInternalClients");
       const loadBtn = document.getElementById("loadBtn");
       const clearBtn = document.getElementById("clearBtn");
@@ -964,20 +1015,110 @@
         clientsTableBodyEl.innerHTML = rows.join("");
       }
 
-      function updateClientFilterOptions(rows) {
-        const previous = clientFilterEl.value;
-        const clients = Array.from(new Set(rows.map((r) => r.client || "-"))).sort((a, b) => a.localeCompare(b));
-        clientFilterEl.innerHTML = `<option value="">Все клиенты</option>`;
-        for (const client of clients) {
-          const option = document.createElement("option");
-          option.value = client;
-          option.textContent = client;
-          clientFilterEl.appendChild(option);
+      let clientFilterSelected = "";
+      let clientFilterOptionsList = [];
+
+      function getVisibleSummaryClients() {
+        if (!latestByClient || latestByClient.size === 0) return [];
+        const list = [];
+        for (const [client] of latestByClient.entries()) {
+          if (isClientVisibleInClientsTable(client)) list.push(client);
         }
-        if (clients.includes(previous)) {
-          clientFilterEl.value = previous;
+        return list.sort((a, b) => a.localeCompare(b, "ru"));
+      }
+
+      function getClientFilterSelection() {
+        return clientFilterSelected;
+      }
+
+      function normalizeClientFilterQuery(value) {
+        return String(value || "")
+          .trim()
+          .toLowerCase();
+      }
+
+      function hideClientFilterSuggestions() {
+        if (clientFilterSuggestionsEl) clientFilterSuggestionsEl.hidden = true;
+      }
+
+      function showClientFilterSuggestions() {
+        if (clientFilterSuggestionsEl) clientFilterSuggestionsEl.hidden = false;
+      }
+
+      function setClientFilterSelection(clientName, updateInput = true) {
+        const next = clientName && clientFilterOptionsList.includes(clientName) ? clientName : "";
+        clientFilterSelected = next;
+        if (updateInput && clientFilterInputEl) {
+          clientFilterInputEl.value = next;
+          clientFilterInputEl.placeholder = next ? "" : "Все клиенты — введите для поиска";
+        }
+        hideClientFilterSuggestions();
+      }
+
+      function renderClientFilterSuggestions(query) {
+        if (!clientFilterSuggestionsEl) return;
+
+        const q = normalizeClientFilterQuery(query);
+        const matched = q
+          ? clientFilterOptionsList.filter((client) => normalizeClientFilterQuery(client).includes(q))
+          : [...clientFilterOptionsList];
+
+        const items = [];
+        items.push(
+          `<li><button type="button" data-client="" class="${clientFilterSelected === "" ? "is-active" : ""}">Все клиенты</button></li>`,
+        );
+        for (const client of matched.slice(0, 80)) {
+          const active = clientFilterSelected === client ? " is-active" : "";
+          items.push(
+            `<li><button type="button" data-client="${escapeHtml(client)}" class="${active.trim()}">${escapeHtml(client)}</button></li>`,
+          );
+        }
+        if (matched.length > 80) {
+          items.push(`<li class="client-filter-empty">Показаны первые 80 из ${matched.length}. Уточните поиск.</li>`);
+        } else if (q && matched.length === 0) {
+          items.push(`<li class="client-filter-empty">Нет клиентов по запросу «${escapeHtml(query.trim())}»</li>`);
+        }
+
+        clientFilterSuggestionsEl.innerHTML = items.join("");
+        showClientFilterSuggestions();
+      }
+
+      function tryApplyClientFilterFromInput() {
+        const raw = clientFilterInputEl?.value?.trim() ?? "";
+        if (!raw) {
+          if (clientFilterSelected !== "") {
+            setClientFilterSelection("");
+            refreshViewsAfterFilterChange();
+          }
+          return;
+        }
+        const exact = clientFilterOptionsList.find(
+          (client) => normalizeClientFilterQuery(client) === normalizeClientFilterQuery(raw),
+        );
+        if (exact) {
+          if (exact !== clientFilterSelected) {
+            setClientFilterSelection(exact);
+            refreshViewsAfterFilterChange();
+          }
+          return;
+        }
+        if (clientFilterInputEl) {
+          clientFilterInputEl.value = clientFilterSelected;
+          clientFilterInputEl.placeholder = clientFilterSelected
+            ? ""
+            : "Все клиенты — введите для поиска";
+        }
+      }
+
+      function updateClientFilterOptions() {
+        const previous = clientFilterSelected;
+        clientFilterOptionsList = getVisibleSummaryClients();
+        if (previous && !clientFilterOptionsList.includes(previous)) {
+          setClientFilterSelection("");
+        } else if (previous) {
+          setClientFilterSelection(previous, true);
         } else {
-          clientFilterEl.value = "";
+          setClientFilterSelection("", true);
         }
       }
 
@@ -1028,12 +1169,12 @@
       }
 
       function getFilteredDetailsRows() {
-        const selectedClient = clientFilterEl.value;
+        const selectedClient = getClientFilterSelection();
         let rows = latestGroupedRows;
         if (selectedClient) {
           rows = rows.filter((row) => (row.client || "-") === selectedClient);
         }
-        return rows.filter((row) => isClientVisibleByTeamFilter(row.client || "-"));
+        return rows.filter((row) => isClientVisibleInClientsTable(row.client || "-"));
       }
 
       function updateConfigStatusText() {
@@ -1180,6 +1321,7 @@
       function refreshViewsAfterFilterChange() {
         if (latestByClient.size > 0) {
           renderClientsSummary(latestByClient, latestTotalMinutes);
+          updateClientFilterOptions();
         }
         renderDetailsWithFilter(KAITEN_BASE_URL);
         updateExportButtonsState();
@@ -1304,21 +1446,22 @@
         return /[a-zA-Zа-яА-ЯёЁ]/.test(String(value ?? ""));
       }
 
-      function addSpaceBeforePercent(text) {
-        return String(text).replace(/(\d)\s*%/g, "$1 %");
-      }
+      const EXCEL_PERCENT_NUMFMT = "0.00%";
+      const CLIENTS_EXPORT_PERCENT_COLS = [1, 4];
 
       function formatCellForXlsxExport(value) {
         if (value == null) return "";
-        if (typeof value === "number") {
-          return String(value).replace(/\./g, ",");
-        }
-        let text = String(value);
-        if (text.includes("%")) {
-          text = addSpaceBeforePercent(text);
-        }
+        if (typeof value === "number" && Number.isFinite(value)) return value;
+        const text = String(value);
         if (cellHasLetters(text)) return text;
         return text.replace(/\./g, ",");
+      }
+
+      function percentDisplayToExcelFraction(percentOnScale0to100) {
+        if (typeof percentOnScale0to100 !== "number" || !Number.isFinite(percentOnScale0to100)) {
+          return null;
+        }
+        return percentOnScale0to100 / 100;
       }
 
       function percentToExcelFillRgb(percent) {
@@ -1361,6 +1504,11 @@
         };
       }
 
+      function mergeExcelCellStyle(cell, extraStyle) {
+        if (!extraStyle) return;
+        cell.s = { ...(cell.s || {}), ...extraStyle };
+      }
+
       function applyWorksheetCellStyles(ws, formattedRows, getCellStyle) {
         if (!getCellStyle || !ws["!ref"]) return;
         const range = XLSX.utils.decode_range(ws["!ref"]);
@@ -1370,17 +1518,36 @@
             const cell = ws[addr];
             if (!cell) continue;
             const style = getCellStyle(r, c, formattedRows[r]?.[c], formattedRows[r]);
-            if (style) cell.s = style;
+            if (style) mergeExcelCellStyle(cell, style);
+          }
+        }
+      }
+
+      function applyPercentNumberFormats(ws, sourceRows, percentColIndices) {
+        if (!ws["!ref"] || !percentColIndices.length) return;
+        for (let r = 1; r < sourceRows.length; r += 1) {
+          const row = sourceRows[r];
+          if (!row) continue;
+          for (const c of percentColIndices) {
+            const val = row[c];
+            if (typeof val !== "number" || !Number.isFinite(val)) continue;
+            const addr = XLSX.utils.encode_cell({ r, c });
+            const cell = ws[addr] || {};
+            cell.v = val;
+            cell.t = "n";
+            mergeExcelCellStyle(cell, { numFmt: EXCEL_PERCENT_NUMFMT });
+            ws[addr] = cell;
           }
         }
       }
 
       function getClientsExportCellStyle(rowIndex, colIndex, _cellValue, row) {
         if (rowIndex === 0) return makeExcelHeaderStyle();
+        const style = { numFmt: CLIENTS_EXPORT_PERCENT_COLS.includes(colIndex) ? EXCEL_PERCENT_NUMFMT : undefined };
         if (colIndex === 4 && row) {
           const client = row[0];
           const agg = latestByClient.get(client);
-          if (!agg) return null;
+          if (!agg) return style.numFmt ? style : null;
           const configNorm = getClientNormHours(client);
           const normHoursFact = agg.norm / 60;
           const percentValue =
@@ -1388,11 +1555,12 @@
           const rgb = percentToExcelFillRgb(percentValue);
           if (rgb) {
             return {
+              ...style,
               fill: { patternType: "solid", fgColor: { rgb } },
             };
           }
         }
-        return null;
+        return style.numFmt ? style : null;
       }
 
       function getDetailsExportCellStyle(rowIndex, colIndex, _cellValue, row) {
@@ -1440,14 +1608,16 @@
           const configNorm = getClientNormHours(client);
           const percentValue =
             typeof configNorm === "number" && configNorm > 0 ? (normHoursFact / configNorm) * 100 : null;
-          const percentText = typeof percentValue === "number" ? `${percentValue.toFixed(2)}%` : "-";
-          const percentOfTotal = totalMinutes > 0 ? `${((minutes / totalMinutes) * 100).toFixed(2)}%` : "-";
+          const percentOfTotalFraction =
+            totalMinutes > 0 ? percentDisplayToExcelFraction((minutes / totalMinutes) * 100) : null;
+          const percentNormFraction =
+            typeof percentValue === "number" ? percentDisplayToExcelFraction(percentValue) : null;
           dataRows.push([
             client,
-            percentOfTotal,
+            percentOfTotalFraction ?? "-",
             formatHoursFromMinutes(agg.total),
             formatHoursFromMinutes(agg.norm),
-            percentText,
+            percentNormFraction ?? "-",
             formatHoursFromMinutes(agg.agreed),
             formatHoursFromMinutes(agg.newProjects),
             formatHoursFromMinutes(agg.critical),
@@ -1477,9 +1647,10 @@
         return [header, ...rows];
       }
 
-      function downloadWorkbook(sheetName, rows, fileName, getCellStyle) {
+      function downloadWorkbook(sheetName, rows, fileName, getCellStyle, options = {}) {
         const formatted = formatRowsForXlsxExport(rows);
         const ws = XLSX.utils.aoa_to_sheet(formatted);
+        applyPercentNumberFormats(ws, rows, options.percentCols || []);
         applyWorksheetCellStyles(ws, formatted, getCellStyle);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
@@ -1653,7 +1824,7 @@
           cardsCountEl.textContent = String(cardsInPeriod);
           minutesTotalEl.textContent = String(totalMinutes);
           hoursTotalEl.textContent = (totalMinutes / 60).toFixed(2);
-          updateClientFilterOptions(groupedRows);
+          updateClientFilterOptions();
           renderDetailsWithFilter(baseUrl);
           renderClientsSummary(byClient, totalMinutes);
           renderPieChart(byClient, totalMinutes);
@@ -1687,7 +1858,9 @@
         hoursTotalEl.textContent = "0.00";
         renderClientsTableHead();
         clientsTableBodyEl.innerHTML = "";
-        clientFilterEl.innerHTML = `<option value="">Все клиенты</option>`;
+        setClientFilterSelection("");
+        clientFilterOptionsList = [];
+        hideClientFilterSuggestions();
         latestGroupedRows = [];
         latestByClient = new Map();
         latestTotalMinutes = 0;
@@ -1708,8 +1881,46 @@
 
       loadBtn.addEventListener("click", loadData);
       clearBtn.addEventListener("click", clearAll);
-      clientFilterEl.addEventListener("change", () => {
-        refreshViewsAfterFilterChange();
+      if (clientFilterInputEl) {
+        clientFilterInputEl.addEventListener("focus", () => {
+          renderClientFilterSuggestions(clientFilterInputEl.value);
+        });
+        clientFilterInputEl.addEventListener("input", () => {
+          renderClientFilterSuggestions(clientFilterInputEl.value);
+        });
+        clientFilterInputEl.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") {
+            hideClientFilterSuggestions();
+            return;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            tryApplyClientFilterFromInput();
+          }
+        });
+        clientFilterInputEl.addEventListener("blur", () => {
+          window.setTimeout(() => {
+            tryApplyClientFilterFromInput();
+            hideClientFilterSuggestions();
+          }, 150);
+        });
+      }
+      if (clientFilterSuggestionsEl) {
+        clientFilterSuggestionsEl.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+        });
+        clientFilterSuggestionsEl.addEventListener("click", (event) => {
+          const btn = event.target.closest("button[data-client]");
+          if (!btn) return;
+          const client = btn.getAttribute("data-client") || "";
+          setClientFilterSelection(client || "");
+          refreshViewsAfterFilterChange();
+        });
+      }
+      document.addEventListener("click", (event) => {
+        if (!event.target.closest(".client-filter-combo")) {
+          hideClientFilterSuggestions();
+        }
       });
       hideInternalClientsEl.addEventListener("change", () => {
         refreshViewsAfterFilterChange();
@@ -1722,7 +1933,9 @@
         if (latestByClient.size === 0) return;
         const rows = buildClientsExportRows(latestByClient, latestTotalMinutes);
         const stamp = formatLocalDate(new Date());
-        downloadWorkbook("По клиентам", rows, `po-klientam-${stamp}.xlsx`, getClientsExportCellStyle);
+        downloadWorkbook("По клиентам", rows, `po-klientam-${stamp}.xlsx`, getClientsExportCellStyle, {
+          percentCols: CLIENTS_EXPORT_PERCENT_COLS,
+        });
       });
       downloadDetailsBtn.addEventListener("click", () => {
         if (latestGroupedRows.length === 0) return;
