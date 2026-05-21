@@ -235,10 +235,35 @@
         gap: 20px 32px;
         margin-top: 12px;
       }
-      #pieChartCanvas {
+      #pieChartCanvas,
+      #teamHourTypePieCanvas {
         max-width: 100%;
         display: block;
         flex-shrink: 0;
+      }
+      .team-charts-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+        margin-top: 12px;
+      }
+      .team-chart-block h4 {
+        margin: 0 0 8px;
+        font-size: 0.95em;
+        font-weight: 700;
+      }
+      .team-bar-chart-scroll {
+        overflow-x: auto;
+        max-width: 100%;
+      }
+      #teamBarChartCanvas {
+        display: block;
+        max-width: none;
+      }
+      .chart-team-note {
+        margin: 8px 0 0;
+        font-size: 0.9em;
+        opacity: 0.85;
       }
       .pie-legend {
         list-style: none;
@@ -412,10 +437,29 @@
 
       <div class="panel">
         <details class="chart-panel" id="pieChartPanel">
-          <summary>Распределение по % минут (диаграмма)</summary>
+          <summary>Распределение % фактического трека (все команды)</summary>
           <div class="chart-wrap">
             <canvas id="pieChartCanvas" width="360" height="360" aria-label="Круговая диаграмма"></canvas>
             <ol id="pieChartLegend" class="pie-legend" aria-label="ТОП-10 клиентов"></ol>
+          </div>
+        </details>
+        <details class="chart-panel" id="teamChartsPanel" style="margin-top: 12px;">
+          <summary>Распределение % трека по выбранной команде</summary>
+          <p class="chart-team-note" id="teamChartsCaption"></p>
+          <div class="team-charts-wrap">
+            <div class="team-chart-block">
+              <h4>Часы по клиентам (слева — больше часов)</h4>
+              <div class="team-bar-chart-scroll">
+                <canvas id="teamBarChartCanvas" width="720" height="320" aria-label="Столбчатая диаграмма по клиентам"></canvas>
+              </div>
+            </div>
+            <div class="team-chart-block">
+              <h4>Распределение по типу списания часов</h4>
+              <div class="chart-wrap">
+                <canvas id="teamHourTypePieCanvas" width="360" height="360" aria-label="Круговая диаграмма по типам часов"></canvas>
+                <ol id="teamHourTypePieLegend" class="pie-legend" aria-label="Типы списания часов"></ol>
+              </div>
+            </div>
           </div>
         </details>
       </div>
@@ -520,6 +564,10 @@
       const downloadDetailsBtn = document.getElementById("downloadDetailsBtn");
       const pieChartCanvas = document.getElementById("pieChartCanvas");
       const pieChartLegendEl = document.getElementById("pieChartLegend");
+      const teamChartsCaptionEl = document.getElementById("teamChartsCaption");
+      const teamBarChartCanvas = document.getElementById("teamBarChartCanvas");
+      const teamHourTypePieCanvas = document.getElementById("teamHourTypePieCanvas");
+      const teamHourTypePieLegendEl = document.getElementById("teamHourTypePieLegend");
       const rowsEl = document.getElementById("rows");
 
       const formatLocalDate = (d) => {
@@ -1354,9 +1402,237 @@
         if (latestByClient.size > 0) {
           renderClientsSummary(latestByClient, latestTotalMinutes);
           updateClientFilterOptions();
+          renderTeamCharts(latestByClient);
         }
         renderDetailsWithFilter(KAITEN_BASE_URL);
         updateExportButtonsState();
+      }
+
+      function getTeamFilterForCharts() {
+        return teamFilterEl?.value ?? "";
+      }
+
+      function getTeamFilterCaption(teamFilter) {
+        if (!teamFilter) return "Команда: все команды";
+        return `Команда: ${teamFilter}`;
+      }
+
+      function filterByClientTeamScope(byClient, teamFilter) {
+        const scoped = new Map();
+        for (const [client, agg] of byClient.entries()) {
+          if (!teamFilter || getClientTeamFilterKey(client) === teamFilter) {
+            scoped.set(client, agg);
+          }
+        }
+        return scoped;
+      }
+
+      function aggregateHourTypesInTeamScope(byClient, teamFilter) {
+        const totals = emptyClientAggregate();
+        for (const agg of filterByClientTeamScope(byClient, teamFilter).values()) {
+          totals.total += agg.total ?? 0;
+          totals.norm += agg.norm ?? 0;
+          totals.agreed += agg.agreed ?? 0;
+          totals.newProjects += agg.newProjects ?? 0;
+          totals.critical += agg.critical ?? 0;
+          totals.undefined += agg.undefined ?? 0;
+        }
+        return totals;
+      }
+
+      function drawChartEmptyMessage(ctx, width, height, message) {
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = getComputedStyle(document.body).color || "#111";
+        ctx.font = "14px Arial";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(message, width / 2, height / 2);
+      }
+
+      function truncateChartLabel(text, maxLen) {
+        const s = String(text || "");
+        if (s.length <= maxLen) return s;
+        return `${s.slice(0, maxLen - 1)}…`;
+      }
+
+      const HOUR_TYPE_PIE_COLORS = {
+        norm: "#7c3aed",
+        agreed: "#2563eb",
+        newProjects: "#16a34a",
+        critical: "#dc2626",
+        undefined: "#9aa0a6",
+      };
+
+      function buildHourTypePieSlices(totals) {
+        const totalMinutes = totals.total ?? 0;
+        const items = [
+          { key: "norm", label: HOUR_TYPE_LABELS.norm },
+          { key: "agreed", label: HOUR_TYPE_LABELS.agreed },
+          { key: "newProjects", label: HOUR_TYPE_LABELS.newProjects },
+          { key: "critical", label: HOUR_TYPE_LABELS.critical },
+          { key: "undefined", label: "Неопределённые" },
+        ];
+        return items
+          .map((item) => {
+            const minutes = totals[item.key] ?? 0;
+            return {
+              label: item.label,
+              minutes,
+              pct: totalMinutes > 0 ? (minutes / totalMinutes) * 100 : 0,
+              color: HOUR_TYPE_PIE_COLORS[item.key],
+            };
+          })
+          .filter((slice) => slice.minutes > 0);
+      }
+
+      function renderGenericPieChart(canvas, legendEl, slices, getColor) {
+        if (!canvas) return;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        const w = canvas.width;
+        const h = canvas.height;
+        ctx.clearRect(0, 0, w, h);
+
+        if (!slices.length) {
+          if (legendEl) legendEl.innerHTML = "";
+          drawChartEmptyMessage(ctx, w, h, "Нет данных для диаграммы");
+          return;
+        }
+
+        if (legendEl) {
+          legendEl.innerHTML = slices
+            .map((slice, i) => {
+              const color = getColor(slice, i);
+              const pctText = `${slice.pct.toFixed(1)} %`;
+              const factText = formatHoursFromMinutes(slice.minutes);
+              const line = `${slice.label} - ${pctText} - ${factText} ч`;
+              return `<li><span class="swatch" style="background:${escapeHtml(color)}"></span><span class="legend-text">${escapeHtml(line)}</span></li>`;
+            })
+            .join("");
+        }
+
+        const cx = w / 2;
+        const cy = h / 2;
+        const radius = Math.min(w, h) * 0.42;
+        let start = -Math.PI / 2;
+
+        slices.forEach((slice, i) => {
+          const angle = (slice.pct / 100) * Math.PI * 2;
+          const end = start + angle;
+          const color = getColor(slice, i);
+
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.arc(cx, cy, radius, start, end);
+          ctx.closePath();
+          ctx.fillStyle = color;
+          ctx.fill();
+          ctx.strokeStyle = "rgba(255,255,255,0.35)";
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          start = end;
+        });
+      }
+
+      function renderTeamBarChart(byClient, teamFilter) {
+        if (!teamBarChartCanvas) return;
+        const ctx = teamBarChartCanvas.getContext("2d");
+        if (!ctx) return;
+
+        const items = Array.from(filterByClientTeamScope(byClient, teamFilter).entries())
+          .map(([client, agg]) => ({ client, hours: (agg.total ?? 0) / 60 }))
+          .filter((item) => item.hours > 0)
+          .sort((a, b) => b.hours - a.hours);
+
+        const barWidth = 28;
+        const barGap = 10;
+        const padding = { left: 52, right: 20, top: 28, bottom: 88 };
+        const chartHeight = 320;
+        const width = Math.max(
+          520,
+          padding.left + padding.right + items.length * (barWidth + barGap),
+        );
+        teamBarChartCanvas.width = width;
+        teamBarChartCanvas.height = chartHeight;
+
+        if (!items.length) {
+          drawChartEmptyMessage(ctx, width, chartHeight, "Нет данных для диаграммы");
+          return;
+        }
+
+        ctx.clearRect(0, 0, width, chartHeight);
+        const plotTop = padding.top;
+        const plotBottom = chartHeight - padding.bottom;
+        const plotHeight = plotBottom - plotTop;
+        const maxHours = items[0].hours || 1;
+        const textColor = getComputedStyle(document.body).color || "#111";
+
+        ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue("--border") || "#b8bcc4";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, plotBottom);
+        ctx.lineTo(width - padding.right, plotBottom);
+        ctx.stroke();
+
+        ctx.fillStyle = textColor;
+        ctx.font = "11px Arial";
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        for (let tick = 0; tick <= 4; tick += 1) {
+          const value = (maxHours * tick) / 4;
+          const y = plotBottom - (plotHeight * tick) / 4;
+          ctx.fillText(value.toFixed(1), padding.left - 8, y);
+          if (tick > 0) {
+            ctx.strokeStyle = "rgba(128,128,128,0.2)";
+            ctx.beginPath();
+            ctx.moveTo(padding.left, y);
+            ctx.lineTo(width - padding.right, y);
+            ctx.stroke();
+          }
+        }
+
+        items.forEach((item, index) => {
+          const x = padding.left + index * (barWidth + barGap);
+          const barHeight = (item.hours / maxHours) * plotHeight;
+          const y = plotBottom - barHeight;
+          const color = PIE_CHART_COLORS[index % PIE_CHART_COLORS.length];
+
+          ctx.fillStyle = color;
+          ctx.fillRect(x, y, barWidth, barHeight);
+
+          ctx.fillStyle = textColor;
+          ctx.font = "10px Arial";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "top";
+          ctx.fillText(item.hours.toFixed(1), x + barWidth / 2, y - 14);
+
+          ctx.save();
+          ctx.translate(x + barWidth / 2, plotBottom + 6);
+          ctx.rotate(-0.55);
+          ctx.textAlign = "right";
+          ctx.fillText(truncateChartLabel(item.client, 22), 0, 0);
+          ctx.restore();
+        });
+      }
+
+      function renderTeamHourTypePieChart(byClient, teamFilter) {
+        const totals = aggregateHourTypesInTeamScope(byClient, teamFilter);
+        const slices = buildHourTypePieSlices(totals);
+        renderGenericPieChart(
+          teamHourTypePieCanvas,
+          teamHourTypePieLegendEl,
+          slices,
+          (slice) => slice.color || PIE_OTHER_COLOR,
+        );
+      }
+
+      function renderTeamCharts(byClient) {
+        const teamFilter = getTeamFilterForCharts();
+        if (teamChartsCaptionEl) {
+          teamChartsCaptionEl.textContent = getTeamFilterCaption(teamFilter);
+        }
+        renderTeamBarChart(byClient, teamFilter);
+        renderTeamHourTypePieChart(byClient, teamFilter);
       }
 
       function updateExportButtonsState() {
@@ -1429,49 +1705,9 @@
       }
 
       function renderPieChart(byClient, totalMinutes) {
-        if (!pieChartCanvas) return;
-
-        const ctx = pieChartCanvas.getContext("2d");
-        if (!ctx) return;
-        const w = pieChartCanvas.width;
-        const h = pieChartCanvas.height;
-        ctx.clearRect(0, 0, w, h);
-
         const slices = buildPieChartSlices(byClient, totalMinutes);
-        if (slices.length === 0) {
-          if (pieChartLegendEl) pieChartLegendEl.innerHTML = "";
-          ctx.fillStyle = getComputedStyle(document.body).color || "#111";
-          ctx.font = "14px Arial";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText("Нет данных для диаграммы", w / 2, h / 2);
-          return;
-        }
-
         renderPieChartLegend(slices);
-
-        const cx = w / 2;
-        const cy = h / 2;
-        const radius = Math.min(w, h) * 0.42;
-        let start = -Math.PI / 2;
-
-        slices.forEach((slice, i) => {
-          const angle = (slice.pct / 100) * Math.PI * 2;
-          const end = start + angle;
-          const color = getPieSliceColor(slice, i);
-
-          ctx.beginPath();
-          ctx.moveTo(cx, cy);
-          ctx.arc(cx, cy, radius, start, end);
-          ctx.closePath();
-          ctx.fillStyle = color;
-          ctx.fill();
-          ctx.strokeStyle = "rgba(255,255,255,0.35)";
-          ctx.lineWidth = 1;
-          ctx.stroke();
-
-          start = end;
-        });
+        renderGenericPieChart(pieChartCanvas, null, slices, (slice, i) => getPieSliceColor(slice, i));
       }
 
       function cellHasLetters(value) {
@@ -1861,6 +2097,7 @@
           renderDetailsWithFilter(baseUrl);
           renderClientsSummary(byClient, totalMinutes);
           renderPieChart(byClient, totalMinutes);
+          renderTeamCharts(byClient);
           updateExportButtonsState();
         } catch (error) {
           const part =
@@ -1904,6 +2141,16 @@
           ctx?.clearRect(0, 0, pieChartCanvas.width, pieChartCanvas.height);
         }
         if (pieChartLegendEl) pieChartLegendEl.innerHTML = "";
+        if (teamChartsCaptionEl) teamChartsCaptionEl.textContent = "";
+        if (teamHourTypePieLegendEl) teamHourTypePieLegendEl.innerHTML = "";
+        if (teamBarChartCanvas) {
+          const ctx = teamBarChartCanvas.getContext("2d");
+          ctx?.clearRect(0, 0, teamBarChartCanvas.width, teamBarChartCanvas.height);
+        }
+        if (teamHourTypePieCanvas) {
+          const ctx = teamHourTypePieCanvas.getContext("2d");
+          ctx?.clearRect(0, 0, teamHourTypePieCanvas.width, teamHourTypePieCanvas.height);
+        }
         updateExportButtonsState();
       }
 
