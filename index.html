@@ -204,7 +204,7 @@
           </label>
 
           <label class="field full">
-            <span>Конфиг нормо-часов (xlsx): колонка 1 — клиент, колонка 2 — нормо-часы</span>
+            <span>Конфиг (xlsx): клиент, нормо-часы, команда (первая строка — шапка)</span>
             <input id="configFile" type="file" accept=".xlsx,.xls" />
           </label>
         </div>
@@ -233,7 +233,13 @@
           </div>
         </div>
         <div id="status">Введите токен доступа и период, затем нажмите «Загрузить».</div>
-        <div id="configStatus" class="note">Конфиг норм не загружен.</div>
+        <div id="configStatus" class="note">Конфиг не загружен.</div>
+        <label id="teamFilterWrap" class="field" style="max-width: 420px; display: none; margin-top: 10px;">
+          <span>Фильтр по команде (из конфига)</span>
+          <select id="teamFilter">
+            <option value="">Все команды</option>
+          </select>
+        </label>
         <div class="note">
           Сводка ограничена условием: учитываются только записи карточек с доски
           <strong>АККАУТИНГ</strong>.
@@ -308,6 +314,8 @@
       const hoursTotalEl = document.getElementById("hoursTotal");
       const clientsTableHeadEl = document.getElementById("clientsTableHead");
       const clientsTableBodyEl = document.getElementById("clientsTableBody");
+      const teamFilterWrapEl = document.getElementById("teamFilterWrap");
+      const teamFilterEl = document.getElementById("teamFilter");
       const rowsEl = document.getElementById("rows");
 
       const formatLocalDate = (d) => {
@@ -354,7 +362,13 @@
       const BETWEEN_CHUNKS_DELAY_MS = 400;
       const RETRYABLE_HTTP = new Set([502, 503, 504, 524]);
 
-      let clientNormHoursMap = new Map();
+      const CONFIG_STORAGE_KEY = "kaiten-track-client-config-v1";
+      const TEAM_FILTER_STORAGE_KEY = "kaiten-track-team-filter-v1";
+      const TEAM_UNSPECIFIED_LABEL = "Команда не указана";
+
+      /** @type {Map<string, { client: string, normHours: number, team: string }>} */
+      let clientConfigByKey = new Map();
+      let configMeta = null;
       let latestGroupedRows = [];
       let latestByClient = new Map();
       let latestTotalMinutes = 0;
@@ -760,10 +774,11 @@
         const sorted = Array.from(byClient.entries()).sort((a, b) => b[1].total - a[1].total);
         for (const [client, agg] of sorted) {
           if (isClientRowHiddenInSummary(client)) continue;
+          if (!isClientVisibleByTeamFilter(client)) continue;
 
           const minutes = agg.total;
           const normHoursFact = agg.norm / 60;
-          const configNorm = clientNormHoursMap.get(normalizeClientName(client));
+          const configNorm = getClientNormHours(client);
           const percentValue =
             typeof configNorm === "number" && configNorm > 0 ? (normHoursFact / configNorm) * 100 : null;
           const percentText = typeof percentValue === "number" ? `${percentValue.toFixed(2)}%` : "-";
@@ -808,14 +823,195 @@
 
       function renderDetailsWithFilter(baseUrl) {
         const selectedClient = clientFilterEl.value;
-        const rows = selectedClient
-          ? latestGroupedRows.filter((row) => (row.client || "-") === selectedClient)
-          : latestGroupedRows;
+        let rows = latestGroupedRows;
+        if (selectedClient) {
+          rows = rows.filter((row) => (row.client || "-") === selectedClient);
+        }
+        rows = rows.filter((row) => isClientVisibleByTeamFilter(row.client || "-"));
         renderRows(rows, baseUrl);
       }
 
       function normalizeClientName(value) {
         return String(value || "").trim().toLowerCase();
+      }
+
+      function normalizeTeamLabel(value) {
+        const t = String(value || "").trim();
+        return t ? t : TEAM_UNSPECIFIED_LABEL;
+      }
+
+      function getClientConfig(clientName) {
+        return clientConfigByKey.get(normalizeClientName(clientName)) || null;
+      }
+
+      function getClientNormHours(clientName) {
+        const cfg = getClientConfig(clientName);
+        return cfg ? cfg.normHours : undefined;
+      }
+
+      function getClientTeamForFilter(clientName) {
+        const cfg = getClientConfig(clientName);
+        if (!cfg) return null;
+        return normalizeTeamLabel(cfg.team);
+      }
+
+      function isConfigLoaded() {
+        return clientConfigByKey.size > 0;
+      }
+
+      function isClientVisibleByTeamFilter(clientName) {
+        if (!isConfigLoaded()) return true;
+        const selectedTeam = teamFilterEl?.value ?? "";
+        if (!selectedTeam) return true;
+        const clientTeam = getClientTeamForFilter(clientName);
+        if (clientTeam == null) return false;
+        return clientTeam === selectedTeam;
+      }
+
+      function updateConfigStatusText() {
+        if (!configMeta || clientConfigByKey.size === 0) {
+          configStatusEl.textContent = "Конфиг не загружен.";
+          return;
+        }
+        const loadedAtText = configMeta.loadedAt
+          ? formatLocalDateTime(new Date(configMeta.loadedAt))
+          : "—";
+        const filePart = configMeta.fileName ? ` Файл: ${configMeta.fileName}.` : "";
+        configStatusEl.textContent =
+          `Конфиг загружен (${loadedAtText}). Записей: ${clientConfigByKey.size}.${filePart} Сохранён в браузере.`;
+      }
+
+      function formatLocalDateTime(d) {
+        return d.toLocaleString("ru-RU", {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
+
+      function saveConfigToStorage() {
+        const entries = [];
+        for (const [, cfg] of clientConfigByKey) {
+          entries.push({
+            clientKey: normalizeClientName(cfg.client),
+            client: cfg.client,
+            normHours: cfg.normHours,
+            team: cfg.team,
+          });
+        }
+        const payload = {
+          version: 1,
+          loadedAt: configMeta?.loadedAt || new Date().toISOString(),
+          fileName: configMeta?.fileName || "",
+          entries,
+        };
+        try {
+          localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(payload));
+        } catch {
+          /* quota / private mode */
+        }
+      }
+
+      function applyConfigEntries(entries, meta) {
+        const map = new Map();
+        for (const entry of entries) {
+          const client = String(entry.client ?? "").trim();
+          if (!client) continue;
+          const normHours = Number(entry.normHours);
+          if (!Number.isFinite(normHours)) continue;
+          const teamRaw = String(entry.team ?? "").trim();
+          map.set(normalizeClientName(client), {
+            client,
+            normHours,
+            team: teamRaw,
+          });
+        }
+        clientConfigByKey = map;
+        configMeta = meta;
+        updateConfigStatusText();
+        updateTeamFilterOptions();
+        saveConfigToStorage();
+      }
+
+      function restoreConfigFromStorage() {
+        try {
+          const raw = localStorage.getItem(CONFIG_STORAGE_KEY);
+          if (!raw) return;
+          const payload = JSON.parse(raw);
+          if (!payload?.entries || !Array.isArray(payload.entries)) return;
+          applyConfigEntries(payload.entries, {
+            loadedAt: payload.loadedAt || null,
+            fileName: payload.fileName || "",
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+
+      function saveTeamFilterToStorage() {
+        try {
+          localStorage.setItem(TEAM_FILTER_STORAGE_KEY, teamFilterEl?.value ?? "");
+        } catch {
+          /* ignore */
+        }
+      }
+
+      function restoreTeamFilterFromStorage() {
+        try {
+          const saved = localStorage.getItem(TEAM_FILTER_STORAGE_KEY);
+          if (saved != null && teamFilterEl) {
+            teamFilterEl.value = saved;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
+      function updateTeamFilterOptions() {
+        if (!teamFilterWrapEl || !teamFilterEl) return;
+
+        if (!isConfigLoaded()) {
+          teamFilterWrapEl.style.display = "none";
+          teamFilterEl.innerHTML = `<option value="">Все команды</option>`;
+          teamFilterEl.value = "";
+          return;
+        }
+
+        teamFilterWrapEl.style.display = "flex";
+        const previous = teamFilterEl.value;
+        const teams = new Set();
+        for (const [, cfg] of clientConfigByKey) {
+          teams.add(normalizeTeamLabel(cfg.team));
+        }
+        const sorted = Array.from(teams).sort((a, b) => {
+          if (a === TEAM_UNSPECIFIED_LABEL) return 1;
+          if (b === TEAM_UNSPECIFIED_LABEL) return -1;
+          return a.localeCompare(b, "ru");
+        });
+
+        teamFilterEl.innerHTML = `<option value="">Все команды</option>`;
+        for (const team of sorted) {
+          const option = document.createElement("option");
+          option.value = team;
+          option.textContent = team;
+          teamFilterEl.appendChild(option);
+        }
+
+        if (previous && (previous === "" || sorted.includes(previous))) {
+          teamFilterEl.value = previous;
+        } else {
+          teamFilterEl.value = "";
+          saveTeamFilterToStorage();
+        }
+      }
+
+      function refreshViewsAfterFilterChange() {
+        if (latestByClient.size > 0) {
+          renderClientsSummary(latestByClient, latestTotalMinutes);
+        }
+        renderDetailsWithFilter(KAITEN_BASE_URL);
       }
 
       const INTERNAL_CLIENT_KEYS = new Set(
@@ -848,14 +1044,8 @@
         return `background:rgba(${r},${g},${b},0.35);`;
       }
 
-      async function loadNormsFromFile(file) {
-        const buf = await file.arrayBuffer();
-        const wb = XLSX.read(buf, { type: "array" });
-        const firstSheetName = wb.SheetNames[0];
-        const sheet = wb.Sheets[firstSheetName];
-        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
-
-        const map = new Map();
+      function parseConfigRows(rows) {
+        const entries = [];
         for (let i = 1; i < rows.length; i += 1) {
           const row = rows[i] || [];
           const clientName = String(row[0] ?? "").trim();
@@ -863,10 +1053,28 @@
           const rawHours = row[1];
           const numHours = Number(String(rawHours ?? "").replace(",", "."));
           if (!Number.isFinite(numHours)) continue;
-          map.set(normalizeClientName(clientName), numHours);
+          const team = String(row[2] ?? "").trim();
+          entries.push({
+            clientKey: normalizeClientName(clientName),
+            client: clientName,
+            normHours: numHours,
+            team,
+          });
         }
-        clientNormHoursMap = map;
-        configStatusEl.textContent = `Конфиг нормо-часов загружен: ${file.name}. Записей: ${map.size}.`;
+        return entries;
+      }
+
+      async function loadNormsFromFile(file) {
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: "array" });
+        const firstSheetName = wb.SheetNames[0];
+        const sheet = wb.Sheets[firstSheetName];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
+        const entries = parseConfigRows(rows);
+        applyConfigEntries(entries, {
+          loadedAt: new Date().toISOString(),
+          fileName: file.name,
+        });
       }
 
       function escapeHtml(value) {
@@ -998,23 +1206,25 @@
           renderClientsSummary(latestByClient, latestTotalMinutes);
         }
       });
+      teamFilterEl.addEventListener("change", () => {
+        saveTeamFilterToStorage();
+        refreshViewsAfterFilterChange();
+      });
       configFileInput.addEventListener("change", async (event) => {
         try {
           const file = event.target.files && event.target.files[0];
-          if (!file) {
-            clientNormHoursMap = new Map();
-            configStatusEl.textContent = "Конфиг нормо-часов не загружен.";
-            return;
-          }
+          if (!file) return;
           await loadNormsFromFile(file);
-          if (latestByClient.size > 0) {
-            renderClientsSummary(latestByClient, latestTotalMinutes);
-          }
+          refreshViewsAfterFilterChange();
         } catch (error) {
-          clientNormHoursMap = new Map();
-          configStatusEl.textContent = `Ошибка загрузки xlsx (нормо-часы): ${error.message}`;
+          configStatusEl.textContent = `Ошибка загрузки xlsx: ${error.message}`;
         }
       });
+
+      restoreConfigFromStorage();
+      restoreTeamFilterFromStorage();
+      updateTeamFilterOptions();
+      updateConfigStatusText();
     </script>
   </body>
 </html>
