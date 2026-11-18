@@ -684,6 +684,7 @@
       })();
 
       const REQUIRED_BOARD_NAME = "АККАУТИНГ";
+      const REQUIRED_BOARD_ID = "906763";
       /** Короткие интервалы: у Cloudflare Worker ~30 с на один HTTP-запрос. */
       const TIMESHEET_CHUNK_DAYS = 3;
       const FETCH_CHUNK_TIMEOUT_MS = 120_000;
@@ -752,9 +753,24 @@
         return fetch(url, opts);
       }
 
+      const TIMESHEET_ARRAY_KEYS = ["items", "data", "time_logs", "timeLogs", "timelogs", "results", "records", "rows"];
+
+      /** Достаёт массив записей из ответа; если формат неизвестен — кидает ошибку, а не «пусто». */
       function itemsFromTimesheetPayload(payload) {
         if (Array.isArray(payload)) return payload;
-        return payload?.items || payload?.data || [];
+        if (payload && typeof payload === "object") {
+          for (const key of TIMESHEET_ARRAY_KEYS) {
+            if (Array.isArray(payload[key])) return payload[key];
+          }
+          const keys = Object.keys(payload).slice(0, 12).join(", ") || "нет полей";
+          const msg = typeof payload.message === "string" ? ` Сообщение: ${payload.message}.` : "";
+          const err = new Error(`Неожиданный формат ответа (поля: ${keys}).${msg}`);
+          err.unexpectedPayload = true;
+          throw err;
+        }
+        const err = new Error(`Неожиданный формат ответа (${typeof payload}).`);
+        err.unexpectedPayload = true;
+        throw err;
       }
 
       function chunkLoadError(message, chunk, chunkIndex, chunkTotal, cause) {
@@ -844,7 +860,13 @@
             onProgress,
           );
           const payload = await response.json();
-          for (const entry of itemsFromTimesheetPayload(payload)) {
+          let chunkItems;
+          try {
+            chunkItems = itemsFromTimesheetPayload(payload);
+          } catch (error) {
+            throw chunkLoadError(error.message, chunk, chunkIndex, chunks.length, error);
+          }
+          for (const entry of chunkItems) {
             const id = entry?.id;
             if (id != null && (typeof id === "number" || typeof id === "string")) {
               if (seenIds.has(id)) continue;
@@ -890,9 +912,41 @@
         );
       }
 
+      function parseBoardId(entry) {
+        const raw =
+          entry.board_id ??
+          entry.boardId ??
+          entry.card?.board_id ??
+          entry.card?.boardId ??
+          entry.card?.board?.id ??
+          null;
+        return raw == null || raw === "" ? null : String(raw);
+      }
+
+      /** Доска совпадает по id (устойчиво к переименованию и к ответам без названия доски) или по названию. */
       function isRequiredBoard(entry) {
+        const boardId = parseBoardId(entry);
+        if (boardId != null && boardId === REQUIRED_BOARD_ID) return true;
         const boardName = String(parseBoardName(entry) || "").trim().toUpperCase();
         return boardName === REQUIRED_BOARD_NAME;
+      }
+
+      function describeBoardsInEntries(items) {
+        const seen = new Map();
+        for (const entry of items) {
+          const id = parseBoardId(entry);
+          const name = String(parseBoardName(entry) || "").trim();
+          const key = `${id ?? "?"}|${name}`;
+          seen.set(key, (seen.get(key) || 0) + 1);
+        }
+        return Array.from(seen.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 8)
+          .map(([key, count]) => {
+            const [id, name] = key.split("|");
+            return `${name || "без названия"} (id ${id}) — ${count}`;
+          })
+          .join("; ");
       }
 
       const CLIENT_PROPERTY_ID = "460456";
@@ -2200,6 +2254,18 @@
           );
 
           const filtered = list.filter((entry) => isRequiredBoard(entry));
+
+          if (list.length > 0 && filtered.length === 0) {
+            statusEl.textContent =
+              `Kaiten вернул ${list.length} записей, но ни одна не относится к доске «${REQUIRED_BOARD_NAME}» ` +
+              `(id ${REQUIRED_BOARD_ID}). Доски в ответе: ${describeBoardsInEntries(list)}.`;
+            return;
+          }
+          if (list.length === 0) {
+            statusEl.textContent =
+              "Kaiten вернул 0 записей за выбранный период. Проверьте даты и права токена.";
+            return;
+          }
 
           statusEl.textContent = "Загружаем справочники полей...";
           const [clientSelectMap, hourTypeSelectMap] = await Promise.all([
